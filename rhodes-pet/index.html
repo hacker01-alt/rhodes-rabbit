@@ -57,6 +57,57 @@ window.addEventListener('error', function (e) {
   document.title = 'JSERR: ' + (e.message || '') + ' @' + (e.lineno || '?');
 });
 </script>
+<script>
+/* ?probe=sound 专用：把 AudioContext 换成假的，记录"到底有没有发声、发的是什么音"。
+   必须在 pet.js **之前**执行 —— 引擎一加载就会创建 Sfx 并抓住 AudioContext。 */
+(function () {
+  if (new URLSearchParams(location.search).get('probe') !== 'sound') return;
+  function noop() {}
+  var A = window.__AUDIO = { ctx: 0, osc: 0, src: 0, freqs: [] };
+  function MockAC() {
+    A.ctx++;
+    this.currentTime = 0;
+    this.sampleRate = 44100;
+    this.state = 'running';
+    this.destination = {};
+    this.resume = noop;
+    this.close = noop;
+    this.createGain = function () {
+      return {
+        gain: { value: 0, setValueAtTime: noop, linearRampToValueAtTime: noop,
+                exponentialRampToValueAtTime: noop },
+        connect: noop, disconnect: noop
+      };
+    };
+    /* 每个振荡器记下它被设定的频率 —— 后面靠这个认出"响的是哪个音效" */
+    this.createOscillator = function () {
+      A.osc++;
+      var rec = { type: '', set: [], rampTo: [] };
+      A.freqs.push(rec);
+      return {
+        type: '',
+        frequency: {
+          setValueAtTime: function (v) { rec.set.push(v); },
+          exponentialRampToValueAtTime: function (v) { rec.rampTo.push(v); }
+        },
+        connect: noop, start: noop, stop: noop
+      };
+    };
+    this.createBuffer = function (ch, len) {
+      return { getChannelData: function () { return new Float32Array(len); } };
+    };
+    this.createBufferSource = function () {
+      A.src++;
+      return { buffer: null, connect: noop, start: noop, stop: noop };
+    };
+    this.createBiquadFilter = function () {
+      return { type: '', frequency: { value: 0 }, Q: { value: 0 }, connect: noop };
+    };
+  }
+  window.AudioContext = MockAC;
+  window.webkitAudioContext = MockAC;
+})();
+</script>
 <script src="pet.js"></script>
 <script>
 /* 观察 .rp-bubble 的出现，抓下所有气泡文字。
@@ -652,6 +703,69 @@ if (new URLSearchParams(location.search).get('probe') === 'ui') {
     U.push('结论: ' + (pass ? 'PASS' : 'FAIL'));
     document.title = 'UIPROBE|' + U.join(' | ');
   }, 600);
+}
+
+/* ?probe=sound —— 验证"抓取 / 放下"音效：真的发声、响的是对的那个、单击不误响。
+   靠振荡器被设定的频率特征来认音效：
+     抓取 = 640 上扬 + 1600 点缀    放下 = 760 下滑 + 240 低音    摸头 = 760 + 1520
+   （240 是放下音独有的，用它区分"放下"和"摸头"——两者都有 760。） */
+if (new URLSearchParams(location.search).get('probe') === 'sound') {
+  var SD = [];
+  setTimeout(function () {
+    var A = window.__AUDIO;
+    var pet = document.querySelector('.rp-pet');
+    SD.push('AudioContext 创建=' + A.ctx + '（期望 >0）');
+    var r = pet.getBoundingClientRect();
+    var cx = Math.round(r.left + r.width / 2), cy = Math.round(r.top + r.height / 2);
+    function soundEv(type, x, y) {
+      pet.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, cancelable: true, clientX: x, clientY: y,
+        pointerId: 7, isPrimary: true, button: 0, buttons: 1
+      }));
+    }
+    function soundFreqs(from) {
+      return A.freqs.slice(from).map(function (f) { return f.set.join('/'); });
+    }
+    function soundNear(list, target) {
+      return list.some(function (s) {
+        return s.split('/').some(function (v) {
+          var n = parseFloat(v);
+          return n > 0 && Math.abs(n - target) / target < 0.09;
+        });
+      });
+    }
+
+    /* ① 拖动 → 抓取音 */
+    var n0 = A.freqs.length;
+    soundEv('pointerdown', cx, cy);
+    soundEv('pointermove', cx + 36, cy + 12);      // 位移 >4px → moved=true → Sfx.grab()
+    var grab = soundFreqs(n0);
+    var grabOk = soundNear(grab, 640) && soundNear(grab, 1600);
+    SD.push('拖动发声 ' + grab.length + ' 组 [' + grab.join(' | ') + ']');
+    SD.push('  抓到抓取音特征(640/1600)=' + grabOk);
+
+    /* ② 松手 → 放下音 */
+    var n1 = A.freqs.length;
+    soundEv('pointerup', cx + 36, cy + 12);
+    var put = soundFreqs(n1);
+    var putOk = soundNear(put, 760) && soundNear(put, 240);
+    SD.push('松手发声 ' + put.length + ' 组 [' + put.join(' | ') + ']');
+    SD.push('  抓到放下音特征(760/240)=' + putOk);
+
+    /* ③ 单击（没移动）不该响抓取音、也不该响放下音 */
+    var n2 = A.freqs.length;
+    soundEv('pointerdown', cx, cy);
+    soundEv('pointerup', cx, cy);
+    var tap = soundFreqs(n2);
+    var tapOk = !soundNear(tap, 640) && !soundNear(tap, 240);
+    SD.push('单击发声 ' + tap.length + ' 组 [' + tap.join(' | ') + ']');
+    SD.push('  没误响抓取/放下音=' + tapOk);
+
+    var pass = A.ctx > 0 && grabOk && putOk && tapOk;
+    SD.push('结论: ' + (pass ? 'PASS'
+      : 'FAIL ' + JSON.stringify({ ctx: A.ctx, 抓取音: grabOk, 放下音: putOk, 单击不误响: tapOk })));
+    document.title = 'SOUNDPROBE|' + SD.join(' | ');
+  }, 700);
 }
 
 /* ?probe=level —— 验证等级/好感机制：连喂直到升级，看数值、进度条、台词池 */

@@ -502,6 +502,25 @@ function RHODES_PET_ENGINE(opts) {
         if (!cfg.sound || !ensure()) return;
         tone(520, 0.09, 0.08, 'sine', 880);
       },
+      /* 抓起兔兔："啵"地一下被提起来 —— 上扬的软音 + 一点绒毛摩擦。
+         只在**真的开始拖**时才响（见 pointermove 里的 moved 判定），
+         单击摸头不响这个，否则"点一下"和"提起来"听起来一样。 */
+      grab: function () {
+        if (!cfg.sound || !ensure()) return;
+        var j = rnd(0.94, 1.06);
+        noise(0.05, 0.04, rnd(2200, 3000), 0.9);            // 绒毛摩擦
+        tone(640 * j, 0.085, 0.10, 'sine', 1180 * j);       // 上扬（被提起）
+        tone(1600 * j, 0.05, 0.035, 'triangle', 2000 * j, 0.025);
+      },
+      /* 放下兔兔：软软地落下去 —— 下滑音 + 一记低音 + 极轻的触地声。
+         和 playDrop 的落地动画同时播，听感上"落"和"响"是一件事。 */
+      put: function () {
+        if (!cfg.sound || !ensure()) return;
+        var j = rnd(0.94, 1.06);
+        tone(760 * j, 0.11, 0.09, 'sine', 360 * j);         // 下滑（落下去）
+        tone(240 * j, 0.09, 0.055, 'sine', 165 * j, 0.015); // 低频"咚"
+        noise(0.045, 0.035, 820, 1.2, 0.03);                // 触地
+      },
       /* 升级：三音上行 + 一层很轻的闪烁，听起来像"变强了"而不是"叮咚" */
       levelUp: function () {
         if (!cfg.sound || !ensure()) return;
@@ -1207,7 +1226,10 @@ function RHODES_PET_ENGINE(opts) {
   pet.addEventListener('pointermove', function (ev) {
     if (!S.drag || ev.pointerId !== S.drag.id) return;
     var dx = ev.clientX - S.drag.sx, dy = ev.clientY - S.drag.sy;
-    if (!S.drag.moved && Math.abs(dx) + Math.abs(dy) > 4) S.drag.moved = true;
+    if (!S.drag.moved && Math.abs(dx) + Math.abs(dy) > 4) {
+      S.drag.moved = true;
+      Sfx.grab();                    // 只有真的开始拖才响，单击摸头不响这个
+    }
     if (!S.drag.moved) return;
     S.x = clamp(S.drag.ox + dx, 4, window.innerWidth - S.W - 4);
     S.y = clamp(S.drag.oy + dy, 4, window.innerHeight - S.H - 4);
@@ -1227,6 +1249,7 @@ function RHODES_PET_ENGINE(opts) {
          落差给小（26px）、时长给短 —— 摸起来是轻快的一"啪"；
          关掉淡入/落地（landMs=0 且 fadeIn=0）时也照做，因为它是一次交互反馈，
          和"出场方式"是两回事。 */
+      Sfx.put();                     // 放下音，和落地动画同时（"落"和"响"是一件事）
       playDrop(240, 26);
     }
     else if (wasTap) {
@@ -1321,12 +1344,13 @@ function RHODES_PET_ENGINE(opts) {
       '<button class="rp-btn" id="rp-act-feed">喂一根</button>' +
       '<button class="rp-btn" id="rp-act-reset">回到右下角</button>' +
       '</div>' +
-      group('data', '数据', true,
-        '<div class="rp-hint">清空数据会把等级、好感、吃过多少根、胡萝卜库存和位置一起归零。' +
-        '（养成系桌宠只记累计值，不显示"本次会话"这类关掉就归零的数字 —— 看着像掉档。）</div>' +
-        '<div class="rp-acts">' +
-        '<button class="rp-btn" id="rp-act-wipe">清空数据</button>' +
-        '</div>') +
+      /* 清空数据：**保留**，它是"想重新开始 / 数据出问题"时的逃生舱口 ——
+         去掉的话普通用户就只能去开控制台敲命令了。
+         但不再单独占一个折叠分组：原来那段解释"为什么不显示本次会话计数"的说明
+         是写给开发者的，对用户零价值，已删掉；按钮直接放面板最底部。 */
+      '<div class="rp-acts">' +
+      '<button class="rp-btn" id="rp-act-wipe">清空数据</button>' +
+      '</div>' +
       '</div>';                                   // .rp-panel-scroll
 
     function bindRange(id, key, fn) {
