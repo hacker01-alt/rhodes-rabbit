@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>罗德岛兔兔桌宠 · 预览</title>
+<style>
+  html,body{height:100%;margin:0;background:#0b0d12;color:#e8eef7;
+    font-family:"Microsoft YaHei","PingFang SC","Noto Sans SC",sans-serif}
+  /* 一层假界面，用来验证桌宠不会挡住底下、也看看叠在真实内容上好不好看 */
+  .fake{position:fixed;inset:0;padding:88px;overflow:hidden;
+    background:
+      radial-gradient(ellipse 60% 50% at 22% 12%,rgba(88,140,220,.16),transparent 70%),
+      radial-gradient(ellipse 50% 40% at 82% 82%,rgba(150,90,220,.12),transparent 70%),
+      #0b0d12}
+  .fake h1{font-size:30px;font-weight:600;letter-spacing:.02em;margin:0 0 10px}
+  .fake p{color:rgba(232,238,247,.5);line-height:1.9;max-width:620px;font-size:14px}
+  .fake .card{margin-top:26px;padding:18px 20px;border:1px solid rgba(255,255,255,.09);
+    border-radius:12px;background:rgba(255,255,255,.03);max-width:620px}
+  .fake .card b{color:#9fd8ff;font-weight:500}
+  .fake .row{display:flex;gap:10px;margin-top:18px;flex-wrap:wrap}
+  .fake button{padding:8px 14px;border-radius:8px;border:1px solid rgba(255,255,255,.16);
+    background:rgba(255,255,255,.04);color:#e8eef7;font-size:13px;cursor:pointer;font-family:inherit}
+  .fake button:hover{background:rgba(255,255,255,.1)}
+  .fake textarea{width:100%;margin-top:18px;height:120px;padding:12px;border-radius:10px;
+    border:1px solid rgba(255,255,255,.12);background:rgba(0,0,0,.35);color:#cfe0f5;
+    font-family:Consolas,Menlo,monospace;font-size:13px;resize:none;box-sizing:border-box}
+  .tip{position:fixed;left:88px;bottom:36px;font-size:12px;color:rgba(232,238,247,.3);
+    font-family:Consolas,Menlo,monospace;letter-spacing:.08em}
+</style>
+</head>
+<body>
+
+<!-- 假界面：只是个背景板，验证遮挡与观感 -->
+<div class="fake">
+  <h1>罗德岛终端 · 预览页</h1>
+  <p>这一页是给桌宠当背景用的。兔兔应该浮在它上面，并且<strong>只有兔兔本体</strong>能接住点击——
+     点旁边的文字、按钮、输入框都要正常工作，不能被透明的浮层吃掉。</p>
+  <div class="card">
+    <div>下面这些是<b>真实可交互</b>的控件，用来验证桌宠没挡住界面：</div>
+    <div class="row">
+      <button onclick="this.textContent='点到了 ✓'">点我试试</button>
+      <button onclick="alert('按钮可用，浮层没有吃事件')">弹窗</button>
+      <button onclick="RHODES_PET.openPanel()">打开兔兔设置</button>
+      <button onclick="RHODES_PET.feed()">喂一根胡萝卜</button>
+      <button onclick="RHODES_PET.talk()">让它说话</button>
+      <button onclick="RHODES_PET.grantXp(5)">+5 经验（试升级）</button>
+    </div>
+    <textarea placeholder="在这里打字，确认输入框可以正常聚焦和输入…"></textarea>
+  </div>
+</div>
+<div class="tip">拖动兔兔换位置 · 单击=摸它 · 双击=说话 · 右键=设置 · Esc 关面板</div>
+
+<script>
+/* 把运行期异常暴露到 <title>，这样无头 --dump-dom 就能直接看到脚本挂在哪 */
+window.addEventListener('error', function (e) {
+  document.title = 'JSERR: ' + (e.message || '') + ' @' + (e.lineno || '?');
+});
+</script>
+<script src="pet.js"></script>
+<script>
+/* 观察 .rp-bubble 的出现，抓下所有气泡文字。
+   用途：验证"签到提醒是否真的跟着出场弹出来了" —— 只看内部状态不够，
+   得看到 DOM 里真出现了那句话。必须在引擎自动挂载之前就开始观察。 */
+(function () {
+  window.__CHECKIN_BUBBLES = [];
+  var scan = function (root) {
+    var list = root.querySelectorAll ? root.querySelectorAll('.rp-bubble') : [];
+    for (var i = 0; i < list.length; i++) {
+      var t = (list[i].textContent || '').trim();
+      if (t && window.__CHECKIN_BUBBLES.indexOf(t) < 0) window.__CHECKIN_BUBBLES.push(t);
+    }
+  };
+  var obs = new MutationObserver(function (muts) {
+    for (var i = 0; i < muts.length; i++) {
+      for (var j = 0; j < muts[i].addedNodes.length; j++) {
+        var n = muts[i].addedNodes[j];
+        if (n.nodeType === 1) scan(n);
+      }
+    }
+    scan(document);
+  });
+  var start = function () { obs.observe(document.documentElement, { childList: true, subtree: true }); };
+  if (document.documentElement) start();
+  else document.addEventListener('DOMContentLoaded', start);
+})();
+</script>
+<script>
+/* ?diag=1 —— 把兔兔与胡萝卜的视口坐标写进标题，便于无头核对是否真的画在屏幕上 */
+if (new URLSearchParams(location.search).get('diag') === '1') {
+  setTimeout(function () {
+    function box(sel) {
+      var n = document.querySelector(sel);
+      if (!n) return sel + '=MISSING';
+      var r = n.getBoundingClientRect(), cs = getComputedStyle(n);
+      return sel + '=[' + [r.left, r.top, r.width, r.height].map(Math.round).join(',') +
+        '] op=' + cs.opacity + ' z=' + cs.zIndex;
+    }
+    document.title = 'DIAG|' + box('.rp-pet') + '|' + box('.rp-carrot') + '|' +
+      box('.rp-count') + '|vw=' + innerWidth + 'x' + innerHeight;
+  }, 260);
+}
+
+/* ?probe=1 —— 验证面板里的动态数字（"已吃 N 根"）是否真的会实时更新。
+   注意：只有**累计**这一个口径了，早先的"本次会话"已移除（关掉就归零，看着像掉档）。 */
+if (new URLSearchParams(location.search).get('probe') === '1') {
+  var L = [];
+  var rd = function (id) {
+    var n = document.querySelector('#' + id);
+    return n ? n.textContent : 'MISSING';
+  };
+  var snap = function () {
+    return '面板已吃=' + rd('rp-eat') + ' config=' + window.RHODES_PET.config.eatCount;
+  };
+  setTimeout(function () {
+    L.push('1) 开面板后 ' + snap());
+    window.RHODES_PET.feed();
+    setTimeout(function () {
+      L.push('2) 喂一根后 ' + snap());
+      setTimeout(function () { window.RHODES_PET.feed(); }, 1400);
+      setTimeout(function () {
+        L.push('3) 再喂一根后 ' + snap());
+        document.title = 'PROBE|' + L.join(' | ');
+      }, 2700);
+    }, 200);
+  }, 150);
+}
+
+/* ?probe=follow —— 验证"跟着鼠标"：鼠标沿轨迹走，看兔兔是不是在附近随机游走
+   判据（这才是"跟随"该有的样子）：
+     1) 兔兔确实在动，而且路径不是一条直线（有随机折线）
+     2) 始终在光标附近（不远不近）
+     3) 只是偶尔碰到光标，不是一直压着（旧版每帧指数平滑会永远黏住）
+     4) 不越界
+   无头浏览器不持续调度 requestAnimationFrame，所以这里显式喂 dt 推进。 */
+if (new URLSearchParams(location.search).get('probe') === 'follow') {
+  var F = [];
+  var P = window.RHODES_PET;
+  var petNode = document.querySelector('.rp-pet');
+  var box = function () { return petNode.getBoundingClientRect(); };
+
+  /* 这个探针要**按真实时间**跑，不能一帧一帧地喂假 dt。
+     原因：followTick 的"休息"判定用的是 performance.now()，不是传进去的 dt。
+     早先的写法是同步跑 600 次 P.step(1/60)，而实测每次 step 的真实时钟推进是 0.0ms ——
+     时钟几乎没走，兔兔就一直被判成"还在休息"，10 秒只挪了 174px，
+     于是探针报 FAIL（其实逻辑没问题，是探针和被测逻辑用了两个不同的时间源）。
+     现在改成 setInterval 分块推进，让真实时钟跟着走，每个 tick 里再喂一步 dt。 */
+  var DUR = 10000;        // 观察 10 秒
+  var mx = 380, my = 430;
+  var near = 0, overlapping = 0, samples = 0;
+  var dirs = [], prevX = 0, prevY = 0, travel = 0, start = null;
+  var t0 = 0;
+
+  var tick = function () {
+    mx += 9;
+    if (mx > 1180) { mx = 380; my += 60; if (my > 640) my = 430; }   // 走到头换一行
+    window.dispatchEvent(new MouseEvent('mousemove', { clientX: mx, clientY: my, bubbles: true }));
+    P.step(1 / 60);
+
+    var r = box();
+    var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    var d = Math.sqrt((cx - mx) * (cx - mx) + (cy - my) * (cy - my));
+    samples++;
+    if (d <= 420) near++;
+    if (d <= 70) overlapping++;                    // 压在光标上
+    if (samples % 20 === 0) dirs.push(Math.round(r.left) + ',' + Math.round(r.top));
+    if (samples > 1) travel += Math.abs(r.left - prevX) + Math.abs(r.top - prevY);
+    prevX = r.left; prevY = r.top;
+    if (r.left < 0 || r.top < 0) F.push('！越界 (' + r.left + ',' + r.top + ')');
+
+    if (performance.now() - t0 >= DUR) {
+      clearInterval(timer);
+      var last = box();
+      F.push('跑了 ' + Math.round(performance.now() - t0) + 'ms / ' + samples + ' 次采样');
+      F.push('采样点: ' + dirs.join(' | '));
+      F.push('总位移=' + Math.round(travel) + 'px（要 > 300 才算真的在动）');
+      F.push('在光标 420px 内的比例=' + Math.round(near / samples * 100) + '%（要 >= 70%）');
+      F.push('压在光标上的比例=' + Math.round(overlapping / samples * 100) + '%（要 <= 25%，旧版几乎 100%）');
+      F.push('终点 (' + Math.round(last.left) + ',' + Math.round(last.top) + ')');
+      var ok = travel > 300 && near / samples >= 0.7 && overlapping / samples <= 0.25 &&
+        last.left >= 0 && last.top >= 0;
+      F.push('结论: ' + (ok ? 'PASS 在附近游走且不黏着' : 'FAIL'));
+      document.title = 'FOLLOWPROBE|' + F.join(' | ');
+    }
+  };
+
+  var timer = 0;
+  setTimeout(function () {
+    var p0 = box();
+    F.push('起点 (' + Math.round(p0.left) + ',' + Math.round(p0.top) + ') follow=' + P.config.follow);
+    prevX = p0.left; prevY = p0.top;
+    t0 = performance.now();
+    timer = setInterval(tick, 16);
+  }, 300);
+}
+
+/* ?probe=dragdrop —— 验证"拖动松手时有一记落地"：
+   合成一次拖动（位移超过 4px 才算拖动），松手后采样，应当出现一小段落差再归位。 */
+if (new URLSearchParams(location.search).get('probe') === 'dragdrop') {
+  var DD = [];
+  var PD = window.RHODES_PET;
+  var dnode = function () { return document.querySelector('.rp-pet'); };
+  setTimeout(function () {
+    var r0 = dnode().getBoundingClientRect();
+    var dcx = r0.left + r0.width / 2, dcy = r0.top + r0.height / 2;
+    var pev = function (type, x, y) {
+      dnode().dispatchEvent(new PointerEvent(type, {
+        clientX: x, clientY: y, bubbles: true, cancelable: true,
+        pointerId: 9, pointerType: 'mouse', isPrimary: true
+      }));
+    };
+    var restTop = Math.round(r0.top);
+
+    /* 按住 → 往上拖 60px（超过 4px 阈值）→ 松手 */
+    pev('pointerdown', dcx, dcy);
+    DD.push('pointerdown 后 S.drag=' + (PD.state.drag ? '已建立(id=' + PD.state.drag.id + ')' : 'null'));
+    /* 事件到底打在了哪个元素上 */
+    var hit = document.elementFromPoint(dcx, dcy);
+    DD.push('该坐标上的元素=' + (hit ? (hit.className || hit.tagName) : 'null') +
+      ' 在 .rp-pet 内=' + !!(hit && hit.closest && hit.closest('.rp-pet')));
+    pev('pointermove', dcx, dcy - 60);
+    pev('pointermove', dcx, dcy - 60);
+    var dropTop = Math.round(dnode().getBoundingClientRect().top);
+
+    pev('pointerup', dcx, dcy - 60);
+
+    var samples = [];
+    var t0 = performance.now();
+    var tick = function () {
+      samples.push(Math.round(dnode().getBoundingClientRect().top));
+      if (performance.now() - t0 < 600) { setTimeout(tick, 25); return; }
+      var minTop = Math.min.apply(null, samples);
+      var last = samples[samples.length - 1];
+      DD.push('拖动前 top=' + restTop + ' → 拖完 top=' + dropTop +
+        '（应小 60 左右，说明拖动生效）');
+      DD.push('松手后采样=' + samples.slice(0, 14).join(','));
+      DD.push('过程最高 top=' + minTop + '（松手那一刻）→ 结束 top=' + last);
+      var moved = dropTop < restTop - 40;
+      var dropped = last > minTop;                 // 确实往下落了一段
+      var back = Math.abs(last - dropTop) <= 2;    // 精确归位到落点
+      var pass = moved && dropped && back;
+      DD.push('结论: ' + (pass ? 'PASS 松手有一记落地并归位'
+        : 'FAIL ' + JSON.stringify({ 拖动生效: moved, 有下落: dropped, 精确归位: back })));
+      document.title = 'DRAGDROP|' + DD.join(' | ');
+    };
+    tick();
+  }, 900);
+}
+
+/* ?probe=levels —— 验证 120 级经验曲线、称号阈值、进度条百分比 */
+if (new URLSearchParams(location.search).get('probe') === 'levels') {
+  var LV = [];
+  setTimeout(function () {
+    var P = window.RHODES_PET;
+    var lv = function (xp) { return P.levelInfoAt(xp); };
+    /* 关键累计点。注意 CUM[i] 是"到达 i+1 级"的累计门槛：
+       CUM[1]=3 → Lv2，CUM[2]=8 → Lv3，CUM[9]=120 → Lv11，
+       所以 Lv10 在 CUM[8]=99，Lv20 在 CUM[18]=?（下面用 439/440 卡 Lv20/Lv21 的边界）。 */
+    var key = [
+      [0, 1], [2, 1], [3, 2], [7, 2], [8, 3],
+      [99, 10], [119, 10], [120, 11], [439, 20], [440, 21],
+      [2134, 50], [2135, 51], [9589, 120], [9590, 120], [99999, 120]
+    ];
+    var bad = 0;
+    key.forEach(function (k) {
+      var got = lv(k[0]).level;
+      var ok = got === k[1];
+      if (!ok) bad++;
+      LV.push('xp=' + k[0] + ' → Lv' + got + (ok ? '' : '（期望 Lv' + k[1] + '）'));
+    });
+    /* 称号阈值：现在是**每 20 级一档**（和颜色对齐），所以期望值要按新档位写 */
+    var titles = [[1, '临时登记'], [20, '临时登记'], [21, '后勤实习生'],
+      [41, '正式干员 · E0'], [61, '资深干员 · E1'], [81, '行动组队长 · E1'],
+      [101, '罗德岛王牌 · E2'], [120, '首席胡萝卜官']];
+    titles.forEach(function (t) {
+      var got = P.titleOf(t[0]);
+      LV.push('Lv' + t[0] + ' 称号=' + got + (got === t[1] ? '' : '（期望 ' + t[1] + '）'));
+      if (got !== t[1]) bad++;
+    });
+    /* 进度条百分比：刚到升级线应为 0%，差一点应接近 100%
+       （Lv2 区间是 3→8，跨度 5，所以 xp=3 是 0%、xp=5 是 40%、xp=7 是 80%） */
+    var a = lv(3);      // 刚升到 Lv2
+    var b = lv(7);      // 差 1 点升 Lv3
+    LV.push('Lv2 起点 进度=' + Math.round(a.prog * 100) + '% 还需 ' + a.need + '（期望 0% / 5）');
+    LV.push('Lv2 差一点 进度=' + Math.round(b.prog * 100) + '% 还需 ' + b.need + '（期望 80% / 1）');
+    LV.push('满级 next=' + lv(9590).next + ' need=' + lv(9590).need + '（期望 null / 0）');
+    LV.push('结论: ' + (bad === 0 ? 'PASS 曲线与阈值都对' : 'FAIL ' + bad + ' 处不符'));
+    document.title = 'LEVELPROBE|' + LV.join(' | ');
+  }, 300);
+}
+
+/* ?probe=tiers —— 验证"每 20 级换一档颜色"：6 档边界、称号与颜色一起换 */
+if (new URLSearchParams(location.search).get('probe') === 'tiers') {
+  var TP = [];
+  setTimeout(function () {
+    var P = window.RHODES_PET;
+    var bad = 0;
+    /* 每档的起点、以及前一档的最后一级，都要对 */
+    var edges = [
+      [1, '临时登记'], [20, '临时登记'],
+      [21, '后勤实习生'], [40, '后勤实习生'],
+      [41, '正式干员 · E0'], [60, '正式干员 · E0'],
+      [61, '资深干员 · E1'], [80, '资深干员 · E1'],
+      [81, '行动组队长 · E1'], [100, '行动组队长 · E1'],
+      [101, '罗德岛王牌 · E2'], [119, '罗德岛王牌 · E2'],
+      /* 120 是单独一档（满级彩蛋），不算在"每 20 级"里 */
+      [120, '首席胡萝卜官']
+    ];
+    edges.forEach(function (e) {
+      var got = P.titleOf(e[0]);
+      var ok = got === e[1];
+      if (!ok) bad++;
+      if (!ok) TP.push('Lv' + e[0] + '→' + got + '（期望 ' + e[1] + '）');
+    });
+    TP.push('边界 12 项' + (bad === 0 ? '全对' : '有 ' + bad + ' 项不符'));
+    TP.push('档位=' + P.tiers.map(function (t) { return t.from + ':' + t.name; }).join(' / '));
+    /* 覆盖范围：6 个 20 级区间（+ 满级单独一档作为彩蛋） */
+    var covered = P.tiers[0].from === 1 && P.tiers[P.tiers.length - 1].from === 120 &&
+      P.tiers.length === 7;
+    if (!covered) bad++;
+    TP.push('档数=' + P.tiers.length + ' 覆盖 1~120=' + covered);
+    /* 每档颜色必须不同，且强度单调递增（越高级越亮） */
+    var cols = P.tiers.map(function (t) { return t.glow; });
+    var uniq = cols.filter(function (c, i) { return cols.indexOf(c) === i; }).length;
+    var mono = P.tiers.every(function (t, i) { return i === 0 || t.glowA > P.tiers[i - 1].glowA; });
+    if (uniq !== cols.length) bad++;
+    if (!mono) bad++;
+    TP.push('颜色各不相同=' + (uniq === cols.length) + ' 强度递增=' + mono);
+    TP.push('结论: ' + (bad === 0 ? 'PASS 6 档与颜色都对' : 'FAIL ' + bad + ' 处不符'));
+    document.title = 'TIERPROBE|' + TP.join(' | ');
+  }, 300);
+}
+
+/* ?probe=interact —— 验证手势语义：单击只摸不喂、拖到嘴边才喂、拖到别处不喂 */
+if (new URLSearchParams(location.search).get('probe') === 'interact') {
+  var IX = [];
+  var P = window.RHODES_PET;
+  var petNode = document.querySelector('.rp-pet');
+  var handle = function () { return document.querySelector('.rp-offer'); };
+  var pe = function () { return P.config.eatCount; };
+  var pev = function (type, x, y, target) {
+    var ev = new PointerEvent(type, {
+      clientX: x, clientY: y, bubbles: true, cancelable: true,
+      pointerId: 1, pointerType: 'mouse', isPrimary: true
+    });
+    (target || window).dispatchEvent(ev);
+  };
+  var pd = function (type, x, y) {
+    petNode.dispatchEvent(new PointerEvent(type, {
+      clientX: x, clientY: y, bubbles: true, cancelable: true, pointerId: 2, pointerType: 'mouse'
+    }));
+  };
+
+  setTimeout(function () {
+    var r = petNode.getBoundingClientRect();
+    var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+
+    /* 1) 单击：只摸不喂（跑 6 次，随机喂食的话几乎必然触发） */
+    var before = pe();
+    for (var i = 0; i < 6; i++) {
+      pd('pointerdown', cx, cy); pd('pointerup', cx, cy);
+    }
+    setTimeout(function () {
+      var afterClick = pe();
+      IX.push('单击 6 次：已吃 ' + before + '->' + afterClick +
+        '（期望不变，证明不再随机喂）' + (afterClick === before ? ' OK' : ' 错!'));
+
+      /* 2) 拖到嘴边松手：应该喂 */
+      var h = handle();
+      if (!h) { IX.push('把手不存在!'); document.title = 'IX|' + IX.join(' | '); return; }
+      var hr = h.getBoundingClientRect();
+      var before2 = pe();
+      pev('pointerdown', hr.left + 22, hr.top + 22, h);
+      pev('pointermove', cx, cy, h);
+      pev('pointerup', cx, cy, h);
+      setTimeout(function () {
+        var afterDrop = pe();
+        IX.push('拖到嘴边喂：' + before2 + '->' + afterDrop +
+          (afterDrop === before2 + 1 ? ' OK' : ' 错!'));
+        /* 吃完再试"拖到别处" */
+        setTimeout(function () {
+          for (var k = 0; k < 8; k++) P.biteOnce();
+          var before3 = pe();
+          var h2 = handle();
+          var r2 = h2.getBoundingClientRect();
+          pev('pointerdown', r2.left + 22, r2.top + 22, h2);
+          pev('pointermove', 40, 40, h2);          // 拖到左上角，远离兔兔
+          pev('pointerup', 40, 40, h2);
+          setTimeout(function () {
+            var afterMiss = pe();
+            IX.push('拖到别处松手：' + before3 + '->' + afterMiss +
+              (afterMiss === before3 ? ' OK 没喂' : ' 错! 不该喂'));
+            var pass = afterClick === before && afterDrop === before2 + 1 && afterMiss === before3;
+            IX.push('结论: ' + (pass ? 'PASS' : 'FAIL'));
+            document.title = 'INTERACT|' + IX.join(' | ');
+          }, 200);
+        }, 1400);
+      }, 200);
+    }, 200);
+  }, 220);
+}
+
+/* ?probe=land —— 验证落地动画：真有下落过程、最终精确归位
+   做法：等默认出场动画结束后，从静止状态**手动触发一次**，然后采样。 */
+if (new URLSearchParams(location.search).get('probe') === 'land') {
+  var LD = [];
+  var petNode = function () { return document.querySelector('.rp-pet'); };
+  setTimeout(function () {
+    var P = window.RHODES_PET;
+    var inner = document.querySelector('.rp-inner');
+    var restTop = Math.round(petNode().getBoundingClientRect().top);
+    P.drop(360);                       // 手动来一次，时长与插件默认一致
+    var samples = [];
+    var t0 = performance.now();
+    var tick = function () {
+      var r = petNode().getBoundingClientRect();
+      /* 外层（位置）在动、内层（呼吸）应保持不动，说明没互相覆盖 */
+      samples.push(Math.round(r.top));
+      if (performance.now() - t0 < 800) setTimeout(tick, 25);
+      else {
+        var minTop = Math.min.apply(null, samples);
+        var last = samples[samples.length - 1];
+        LD.push('静止 top=' + restTop);
+        LD.push('采样=' + samples.slice(0, 16).join(','));
+        LD.push('过程最高 top=' + minTop + '（越小=起得越高，应明显小于 ' + restTop + '）');
+        LD.push('结束 top=' + last + '（应回到 ' + restTop + ' ±2）');
+        LD.push('内部动画层 transform=' + (inner.style.transform || '(空)'));
+        var rose = restTop - minTop > 60;
+        var back = Math.abs(last - restTop) <= 2;
+        var ok = rose && back;
+        LD.push('结论: ' + (ok ? 'PASS 有下落且精确归位' :
+          'FAIL ' + JSON.stringify({ rose: rose, back: back })));
+        document.title = 'LANDPROBE|' + LD.join(' | ');
+      }
+    };
+    tick();
+  }, 900);
+}
+
+if (new URLSearchParams(location.search).get('probe') === 'supply') {
+  var SP = [];
+  setTimeout(function () {
+    var P = window.RHODES_PET;
+    /* 只有累计口径了（"本次会话"已移除） */
+    var snap = function () {
+      return { q: P.supply.quota(), s: P.supply.left(), a: P.supply.available(),
+        eaten: P.config.eatCount, xp: P.config.xp };
+    };
+    var b = snap();
+    var expectFeed = b.a > 0;
+    var ok = P.feed();
+    for (var k = 0; k < 8; k++) P.biteOnce();
+    var a = snap();
+    SP.push('起始 今日=' + b.q + ' 库存=' + b.s + ' 可用=' + b.a);
+    SP.push('feed() 返回=' + ok + '（期望 ' + expectFeed + '）');
+    SP.push('吃一根后 今日=' + a.q + ' 库存=' + a.s + ' 可用=' + a.a);
+    SP.push('累计 ' + b.eaten + '->' + a.eaten + ' / xp ' + b.xp + '->' + a.xp);
+
+    var pass;
+    if (expectFeed) {
+      /* 能喂：可用 -1、累计 +1、xp +1。
+         扣哪个池子要看起始状态：今日配额还有就先扣配额（库存不动），
+         配额空了才扣存粮（今日不动）—— 断言必须跟着这个规则走，不能写死一种。 */
+      var poolOk = b.q > 0
+        ? (a.q === b.q - 1 && a.s === b.s)
+        : (a.q === b.q && a.s === b.s - 1);
+      pass = ok === true && a.a === b.a - 1 && poolOk &&
+        a.eaten === b.eaten + 1 && a.xp === b.xp + 1;
+    } else {
+      pass = ok === false && a.a === b.a &&
+        a.eaten === b.eaten && a.xp === b.xp;
+    }
+    SP.push('扣减来源: ' + (expectFeed
+      ? ((b.q > 0 ? '今日配额' : '存粮') + ' -> ' + (poolOk ? '正确' : '错误'))
+      : '（没喂成，不涉及扣减）'));
+
+    /* 面板上**显示出来的**数字也要跟着动 —— 这正是不久前那个问题的核心：
+       内部状态一直在动，但面板显示的是"含今日剩余的总量"，于是那个数纹丝不动，
+       看起来像两个互不相干的池子。这里直接读 DOM 断言。 */
+    var txt = function (id) {
+      var n = document.querySelector('#' + id);
+      return n ? n.textContent : 'MISSING';
+    };
+    var dq = txt('rp-quota'), dt = txt('rp-total');
+    SP.push('面板显示: 今日=' + dq + ' 共=' + dt + '（期望 今日=' + a.q + ' 共=' + a.a + '）');
+    var domOk = dq === String(a.q) && dt === String(a.a) &&
+      (expectFeed ? dt === String(b.a - 1) : dt === String(b.a));
+    SP.push('面板数字: ' + (domOk ? '正确' : '错误（显示与状态不一致）'));
+    pass = pass && domOk;
+
+    SP.push('结论: ' + (pass ? 'PASS' : 'FAIL'));
+    document.title = 'SUPPLYPROBE|' + SP.join(' | ');
+  }, 300);
+}
+
+/* ?probe=checkin —— 验证每日签到：+50、库存上限 10000、旧格式兼容、脏数据兜底 */
+if (new URLSearchParams(location.search).get('probe') === 'checkin') {
+  var C = [];
+  var KEY = 'dsh-rhodesPet.supply';
+  var today = (function () {
+    var d = new Date();
+    return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' +
+      ('0' + d.getDate()).slice(-2);
+  })();
+  var raw = function () { try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { return null; } };
+  setTimeout(function () {
+    var P = window.RHODES_PET;
+    var st = P.supply.state();
+    C.push('1) 首次签到 今日=' + st.quota + ' 库存=' + st.stock + ' gain=' + st.gain +
+      ' base=' + st.base + ' cap=' + st.cap);
+    C.push('   存储=' + JSON.stringify(raw()));
+    /* gain 现在会被"出场提醒报完就清零"消费掉（刻意的：不清的话每次加载都重复弹），
+       而本探针跑的时候出场早就发生了，所以这里不能断言 gain===50。
+       真正该验的是：配额与库存都到位，且出场提醒**确实报了 +50**（见第 8 项）。 */
+    var firstOk = st.stock === P.supply.base && st.quota === P.supply.base;
+
+    /* 吃 2 根：应当从"今日配额"里扣，库存不动 */
+    P.feed(); for (var i = 0; i < 8; i++) P.biteOnce();
+    P.feed(); for (var j = 0; j < 8; j++) P.biteOnce();
+    var st2 = P.supply.state();
+    C.push('2) 吃 2 根后 今日=' + st2.quota + ' 库存=' + st2.stock +
+      '（期望 今日=' + (P.supply.base - 2) + ' 库存=' + P.supply.base + '）');
+    var eatOk = st2.quota === P.supply.base - 2 && st2.stock === P.supply.base;
+
+    /* 换天：重新签到，今日配额回到 50，库存继续累积 */
+    localStorage.setItem(KEY, JSON.stringify({ day: '2000-01-01', quota: 0, stock: 812, checked: true }));
+    var st3 = P.supply.state();
+    C.push('3) 昨天存粮 812 -> 换天后 今日=' + st3.quota + ' 库存=' + st3.stock + '（期望 50 / 862）');
+    var rollOk = st3.quota === P.supply.base && st3.stock === 862;
+
+    /* 库存接近上限：签到只能收进剩余空间 */
+    localStorage.setItem(KEY, JSON.stringify({ day: '2000-01-01', quota: 0, stock: 9990, checked: true }));
+    var st4 = P.supply.state();
+    C.push('4) 存粮 9990 -> 换天后 今日=' + st4.quota + ' gain=' + st4.gain +
+      ' 库存=' + st4.stock + '（期望 今日=10 gain=10 库存=10000）');
+    var capOk = st4.stock === P.supply.cap && st4.gain === 10 && st4.quota === 10;
+
+    /* 库存已满：签到收不到，今日配额 0 */
+    localStorage.setItem(KEY, JSON.stringify({ day: '2000-01-01', quota: 0, stock: 10000, checked: true }));
+    var st5 = P.supply.state();
+    C.push('5) 存粮已满 -> 换天后 今日=' + st5.quota + ' gain=' + st5.gain +
+      ' 库存=' + st5.stock + '（期望 0 / 0 / 10000）');
+    var fullOk = st5.stock === P.supply.cap && st5.gain === 0 && st5.quota === 0;
+
+    /* 旧格式兼容：老版本只有 { day, left }，left 要当成累积库存接过来 */
+    localStorage.setItem(KEY, JSON.stringify({ day: today, left: 77, checked: true }));
+    var st6 = P.supply.state();
+    C.push('6) 旧格式 left=77 -> 今日=' + st6.quota + ' 库存=' + st6.stock + '（期望 0 / 77）');
+    var legacyOk = st6.stock === 77 && st6.quota === 0;
+
+    /* 脏数据兜底 */
+    localStorage.setItem(KEY, '{坏掉的');
+    var st7 = P.supply.state();
+    C.push('7) 脏数据 -> 今日=' + st7.quota + ' 库存=' + st7.stock + '（期望 50 / 50）');
+    var dirtyOk = st7.stock === P.supply.base && st7.quota === P.supply.base;
+
+    /* 8) 签到提醒是否**跟着出场**弹出来。
+       这是本轮需求的核心：提醒必须挂在"真正的出场时刻"，不能用固定延时 ——
+       插件要等启动动画退场才创建引擎，等多久不确定（几十毫秒到 15s）。
+       这里先把提醒的内容抓下来（气泡可能已经淡出，所以抓过就不再依赖 DOM）。 */
+    var bubbleText = '';
+    var seen = window.__CHECKIN_BUBBLES || [];
+    if (seen.length) bubbleText = seen.join(' / ');
+    C.push('8) 出场时弹出的签到提醒="' + (bubbleText || '(没抓到)') + '"');
+    var bubbleOk = /签到完成/.test(bubbleText) && /\+50/.test(bubbleText) && /共/.test(bubbleText);
+
+    var pass = firstOk && eatOk && rollOk && capOk && fullOk && legacyOk && dirtyOk && bubbleOk;
+    C.push('结论: ' + (pass ? 'PASS' : 'FAIL ' + JSON.stringify({
+      firstOk: firstOk, eatOk: eatOk, rollOk: rollOk, capOk: capOk,
+      fullOk: fullOk, legacyOk: legacyOk, dirtyOk: dirtyOk, 出场提醒: bubbleOk
+    })));
+    document.title = 'CHECKINPROBE|' + C.join(' | ');
+  }, 300);
+}
+
+/* ?probe=level —— 验证等级/好感机制：连喂直到升级，看数值、进度条、台词池 */
+if (new URLSearchParams(location.search).get('probe') === 'level') {
+  var K = [];
+  var rdv = function (id) {
+    var n = document.querySelector('#' + id);
+    return n ? n.textContent : 'MISSING';
+  };
+  var barW = function (id) {
+    var n = document.querySelector('#' + id);
+    return n ? n.style.width : 'MISSING';
+  };
+  var stat = function (tag) {
+    return tag + ' Lv=' + rdv('rp-lv') + ' 称号=' + rdv('rp-title') +
+      ' xp条=' + barW('rp-xp-bar') + ' 好感=' + rdv('rp-aff-val') +
+      ' 好感条=' + barW('rp-aff-bar') + ' 阶段=' + rdv('rp-aff-tier');
+  };
+  /* 一根一根吃：feed 之后用 biteOnce 把整根啃完，否则 S.eat 会挡住下一根 */
+  var gorge = function (n, done) {
+    var i = 0;
+    var one = function () {
+      if (i >= n) { done(); return; }
+      i++;
+      window.RHODES_PET.feed();
+      for (var k = 0; k < 8; k++) window.RHODES_PET.biteOnce();
+      setTimeout(one, 40);
+    };
+    one();
+  };
+  window.addEventListener('rhodes-pet:levelup', function (e) {
+    window.__lvlEvent = (window.__lvlEvent ? window.__lvlEvent + ' / ' : '') +
+      'Lv' + e.detail.level + ' ' + e.detail.title + '(xp=' + e.detail.xp + ')';
+  });
+  setTimeout(function () {
+    K.push('0) 初始 ' + stat('|'));
+    gorge(3, function () {
+      K.push('1) 吃满 3 根 ' + stat('|'));
+      gorge(5, function () {
+        K.push('2) 共 8 根 ' + stat('|'));
+        window.RHODES_PET.touch();
+        window.RHODES_PET.talk();
+        setTimeout(function () {
+          K.push('3) 摸+说话后 affection=' + window.RHODES_PET.config.affection);
+          K.push('4) 升级事件=' + (window.__lvlEvent || '没触发'));
+          document.title = 'LEVELPROBE|' + K.join(' | ');
+        }, 320);
+      });
+    });
+  }, 150);
+}
+</script>
+</body>
+</html>

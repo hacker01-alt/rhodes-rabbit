@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>RHODES ISLAND // BOOT SEQUENCE</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="viewport">
+  <div id="stage" class="stage" data-state="idle">
+
+    <!-- ============ background layers ============ -->
+    <div class="layer grid"></div>
+    <canvas id="fx" class="layer grain" width="960" height="540"></canvas>
+    <div class="layer scanlines"></div>
+    <div class="layer vignette"></div>
+
+    <!-- ============ HUD ============ -->
+    <div class="hud hud-tl">
+      <div class="hud-title">RHODES ISLAND</div>
+      <div class="hud-sub">TERMINAL BOOT SEQUENCE</div>
+      <div class="hud-i">PRTS <span class="hl">v3.14</span> · NODE <span id="nodeId" class="hl">----</span></div>
+      <div class="hud-i">OPERATOR <span class="hl">DOCTOR</span><span class="caret"></span></div>
+      <div class="hud-bar"><i></i></div>
+    </div>
+
+    <div class="hud hud-tr">
+      <div class="hud-i">LINK <span id="linkState" class="hl">STANDBY</span></div>
+      <div class="hud-i">SIGNAL <span id="signal" class="sig">▮▮▯▯▯</span></div>
+      <div class="hud-i" id="clock">--:--:--</div>
+    </div>
+
+    <div class="hud hud-bl">
+      <div class="log" id="log"></div>
+    </div>
+
+    <div class="hud hud-br">© RHODES ISLAND PHARMACEUTICAL INC.</div>
+
+    <!-- ============ hero ============ -->
+    <div class="hero">
+      <div class="logo-wrap" id="logoWrap">
+        <img id="logo" class="logo" src="assets/rhodes.png" alt="RHODES ISLAND">
+        <span class="logo-scan"></span>
+      </div>
+      <div class="rule" id="rule"><i></i><b></b><i></i></div>
+      <div class="subtitle" id="subtitle">罗德岛制药 · RHODES ISLAND PHARMACEUTICAL INC.</div>
+      <div class="chip" id="chip">PRTS KERNEL / BUILD 3.14.0921</div>
+    </div>
+
+    <!-- ============ progress ============ -->
+    <div class="progress" id="progress">
+      <div class="progress-head">
+        <span class="progress-label">LOADING</span>
+        <span class="pct" id="pct" data-font>000<i>%</i></span>
+      </div>
+      <div class="bar"><div class="fill" id="fill"><span class="edge"></span></div><div class="ticks" id="ticks"></div></div>
+      <div class="progress-foot">
+        <span class="status"><span class="arrow">▶</span><span id="statusText">正在初始化…</span><span class="caret"></span></span>
+        <span class="hex" id="hex">0x00000000</span>
+      </div>
+    </div>
+
+    <div class="tip" id="tip"></div>
+
+    <!-- ============ the rabbit ============ -->
+    <div class="rabbit" id="rabbit">
+      <div class="rabbit-count" id="carrotCount">CARROT <b>×0</b></div>
+      <div class="rabbit-hop" id="rabbitHop">
+        <div class="rabbit-shadow" id="rabbitShadow"></div>
+        <img class="rabbit-img" id="rabbitImg" src="assets/rabbit-cut.png" alt="">
+
+        <!-- 兔子嘴边的胡萝卜（纯 SVG，想换颜色改这里） -->
+        <div class="carrot" id="carrot">
+          <svg viewBox="0 0 120 100" aria-hidden="true">
+            <defs>
+              <linearGradient id="carrotGrad" x1="0" y1="0" x2="0.2" y2="1">
+                <stop offset="0" stop-color="#ffc97a"/>
+                <stop offset="0.42" stop-color="#ff9a2e"/>
+                <stop offset="1" stop-color="#df6416"/>
+              </linearGradient>
+            </defs>
+            <g>
+              <ellipse cx="21" cy="30" rx="5.5" ry="12.5" transform="rotate(-38 21 30)" fill="#57c76e"/>
+              <ellipse cx="30" cy="23" rx="5.5" ry="14" transform="rotate(-10 30 23)" fill="#77dd8c"/>
+              <ellipse cx="38" cy="29" rx="5" ry="12" transform="rotate(22 38 29)" fill="#45ac5d"/>
+            </g>
+            <path d="M24 33 L104 50 L24 67 Z" fill="url(#carrotGrad)" stroke="url(#carrotGrad)"
+                  stroke-width="9" stroke-linejoin="round"/>
+            <g stroke="rgba(255,255,255,.4)" stroke-width="2.4" stroke-linecap="round">
+              <line x1="43" y1="40" x2="39" y2="61"/>
+              <line x1="61" y1="43" x2="58" y2="58"/>
+              <line x1="79" y1="46" x2="77" y2="55"/>
+            </g>
+          </svg>
+        </div>
+
+        <div class="rabbit-ring" id="rabbitRing"></div>
+      </div>
+    </div>
+
+    <!-- ============ finale dialog ============ -->
+    <div class="dialog" id="dialog">
+      <div class="dialog-name" id="dialogName">???</div>
+      <div class="dialog-text" id="dialogText"></div>
+    </div>
+
+    <div class="endcard" id="endcard">
+      <div class="end-main">SYSTEM <b>ONLINE</b></div>
+      <div class="end-sub">点击任意处 / 按 R 重新播放　·　REPLAY</div>
+    </div>
+
+    <!-- 终章把进度条收掉之后，把"加载完成"这个节拍挪到这里，别让它丢 -->
+    <div class="beat" id="beat">100% · LINK ESTABLISHED</div>
+
+    <!-- ============ controls & fx ============ -->
+    <button class="btn btn-skip" id="skipBtn" type="button">跳过 SKIP</button>
+    <button class="btn btn-sound" id="soundBtn" type="button">♪ SOUND</button>
+
+    <div class="frame"><i></i><i></i><i></i><i></i></div>
+    <div class="flash" id="flash"></div>
+    <div class="tear" id="tear"></div>
+  </div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

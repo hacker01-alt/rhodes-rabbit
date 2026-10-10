@@ -1,0 +1,23 @@
+# ============================================================
+# 换行与文件性质
+# ============================================================
+
+# 文本文件交给 git 自动判断。
+# 这里**刻意不强制 eol**：源码是 LF，而构建产物（client.js）由 Python 在 Windows 上
+# 生成、是 CRLF，两者本来就不一致（见各插件 README 的"构建"一节）。
+# 如果这里写 `eol=lf`，每次构建完 git 都会把产物报成 modified，反而更乱。
+# 想彻底统一的话，得先让构建脚本显式写 LF（open(..., newline='\n')）再改这里。
+* text=auto
+
+# 二进制资源：绝不做换行转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.tgz binary
+
+# 自动生成的产物：告诉 GitHub 折叠掉，别在 diff / 语言统计里刷屏
+rhodes-pet-plugin/client.js linguist-generated=true
+rhodes-boot-plugin/client.js linguist-generated=true
+rhodes-loading-standalone.html linguist-generated=true

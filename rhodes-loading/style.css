@@ -1,0 +1,338 @@
+/* =========================================================
+   RHODES ISLAND // BOOT SEQUENCE
+   明日方舟风格开启动画 · 1920x1080 设计画布，等比自适应
+   ========================================================= */
+
+:root{
+  --ink:#ffffff;
+  --tech:#9fd8ff;
+  --dim:rgba(255,255,255,.45);
+  --dim2:rgba(255,255,255,.22);
+  --line:rgba(255,255,255,.30);
+  --mono:"Consolas","SFMono-Regular","Menlo","DejaVu Sans Mono",monospace;
+  --cn:"Microsoft YaHei","PingFang SC","Noto Sans SC","Source Han Sans SC",sans-serif;
+  --serif:"Times New Roman",Georgia,"Songti SC",serif;
+  --fit:1;
+}
+
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;background:#000;overflow:hidden}
+body{
+  display:grid;place-items:center;
+  font-family:var(--cn);color:var(--ink);
+  -webkit-font-smoothing:antialiased;
+  cursor:crosshair;
+  user-select:none;
+}
+img{display:block;-webkit-user-drag:none}
+
+#stage{
+  position:relative;width:1920px;height:1080px;flex:none;
+  background:#000;overflow:hidden;
+  transform:scale(var(--fit));transform-origin:center center;
+}
+
+/* ---------- background layers ---------- */
+.layer{position:absolute;inset:0;pointer-events:none}
+/* 装饰性图层一律点击穿透：否则那些 opacity:0 的方块会抢走本该点给兔子的点击（点兔子会变成跳过） */
+.hud,.hero,.log,.progress,.tip,.dialog,.endcard,.frame,.sweepbar{pointer-events:none}
+.grid{
+  background-image:
+    linear-gradient(rgba(255,255,255,.035) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(255,255,255,.035) 1px,transparent 1px);
+  background-size:80px 80px;
+  mask-image:radial-gradient(ellipse 62% 58% at 50% 46%,#000 20%,transparent 78%);
+  -webkit-mask-image:radial-gradient(ellipse 62% 58% at 50% 46%,#000 20%,transparent 78%);
+  opacity:0;transition:opacity 1.6s ease .3s;
+}
+.stage.is-run .grid{opacity:1}
+/* canvas 是替换元素，inset:0 不会拉伸它，必须显式给宽高 */
+.grain{width:100%;height:100%;mix-blend-mode:screen;opacity:.75}
+.scanlines{
+  background:repeating-linear-gradient(to bottom,rgba(255,255,255,.055) 0 1px,rgba(0,0,0,0) 1px 3px);
+  mix-blend-mode:overlay;opacity:.55;
+}
+.vignette{
+  background:
+    radial-gradient(ellipse 74% 66% at 50% 46%,rgba(0,0,0,0) 38%,rgba(0,0,0,.72) 100%),
+    linear-gradient(to bottom,rgba(0,0,0,.55),rgba(0,0,0,0) 22%,rgba(0,0,0,0) 74%,rgba(0,0,0,.72));
+}
+@keyframes sweep-down{
+  0%{transform:translateY(-140px);opacity:0}
+  8%{opacity:.9}
+  92%{opacity:.9}
+  100%{transform:translateY(1090px);opacity:0}
+}
+.sweepbar{
+  position:absolute;left:0;right:0;height:120px;pointer-events:none;
+  background:linear-gradient(to bottom,rgba(255,255,255,0),rgba(255,255,255,.10),rgba(255,255,255,0));
+  mix-blend-mode:screen;animation:sweep-down 1.5s cubic-bezier(.4,0,.7,1) forwards;
+}
+
+/* ---------- HUD ---------- */
+.hud{position:absolute;font-family:var(--mono);font-size:15px;line-height:1.65;letter-spacing:.09em;color:var(--dim);
+     opacity:0;transform:translateY(8px);transition:opacity .5s ease,transform .5s ease}.hud.show{opacity:1;transform:none}
+.hud-tl{left:88px;top:74px}
+.hud-tr{right:88px;top:74px;text-align:right}
+.hud-bl{left:88px;bottom:78px;width:620px}
+.hud-br{right:88px;bottom:74px;font-size:13px;color:var(--dim2);letter-spacing:.16em}
+.hud-title{font-family:var(--serif);font-size:26px;letter-spacing:.34em;color:#fff;text-shadow:0 0 18px rgba(255,255,255,.35)}
+.hud-sub{font-size:13px;letter-spacing:.3em;color:var(--dim);margin-bottom:12px}
+.hud-i{white-space:nowrap}
+.hl{color:var(--tech);text-shadow:0 0 12px rgba(120,200,255,.55)}
+.hud-bar{width:230px;height:3px;margin-top:12px;background:rgba(255,255,255,.14);overflow:hidden}
+.hud-bar i{display:block;height:100%;width:34%;background:var(--tech);box-shadow:0 0 10px rgba(120,200,255,.9);
+  animation:hud-slide 2.6s cubic-bezier(.65,0,.35,1) infinite}
+@keyframes hud-slide{0%{transform:translateX(-110%)}100%{transform:translateX(320%)}}
+.sig{color:var(--tech);letter-spacing:.05em;animation:sig-blink 1.5s steps(1,end) infinite}
+@keyframes sig-blink{0%,70%{opacity:1}71%,100%{opacity:.45}}
+.caret{display:inline-block;width:8px;height:15px;margin-left:8px;background:var(--ink);
+  vertical-align:-2px;animation:blink 1.05s steps(1,end) infinite}
+@keyframes blink{0%,49%{opacity:1}50%,100%{opacity:0}}
+
+/* terminal log */
+.log{font-size:13.5px;line-height:1.9;letter-spacing:.06em;color:rgba(255,255,255,.34)}
+.log div{opacity:0;transform:translateY(5px);transition:opacity .3s ease,transform .3s ease;white-space:nowrap}
+.log div.on{opacity:1;transform:none}
+.log .t{color:rgba(255,255,255,.22);margin-right:10px}
+.log .ok{color:var(--tech);margin-left:10px}
+
+/* ---------- hero ---------- */
+.hero{position:absolute;left:0;right:0;top:124px;text-align:center;
+      transition:transform 1.1s cubic-bezier(.2,.8,.2,1),opacity .9s ease}
+.hero.shift{transform:translateY(-42px) scale(.84)}
+.hero.dim{opacity:.16}
+.logo-wrap{position:relative;display:inline-block;opacity:0;will-change:transform,opacity,filter}
+/* logo 是从 557px 的照片抠出来的（621px 已接近原生上限），所以别再往上放。
+   边缘发毛的元凶是那圈 26px 的大范围白辉光：它把锯齿糊成一坨光，边缘反而糊。
+   改法：一圈很小的贴边辉光定轮廓 + 一个极窄的高光核，然后把图放大一点。 */
+.logo{width:432px;height:auto;
+  filter:drop-shadow(0 0 5px rgba(255,255,255,.62)) drop-shadow(0 0 2px rgba(255,255,255,.45))}
+.logo-scan{position:absolute;left:-6%;right:-6%;top:0;height:6px;pointer-events:none;opacity:0;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.95),transparent);
+  mix-blend-mode:screen;filter:blur(1px)}
+
+@keyframes logo-slam{
+  0%{opacity:0;transform:scale(1.10);filter:drop-shadow(0 0 22px rgba(255,255,255,.9)) drop-shadow(11px 0 0 rgba(255,0,60,.85)) drop-shadow(-11px 0 0 rgba(0,225,255,.85))}
+  10%{opacity:1;transform:translate(-8px,3px) scale(1.05);filter:drop-shadow(0 0 18px rgba(255,255,255,.85)) drop-shadow(-13px 0 0 rgba(255,0,60,.75)) drop-shadow(13px 0 0 rgba(0,225,255,.75))}
+  20%{opacity:.35;transform:translate(9px,-4px) scale(1.03);filter:drop-shadow(0 0 14px rgba(255,255,255,.75)) drop-shadow(9px 0 0 rgba(255,0,60,.7)) drop-shadow(-9px 0 0 rgba(0,225,255,.7))}
+  32%{opacity:1;transform:translate(-4px,2px) scale(1.015);filter:drop-shadow(0 0 12px rgba(255,255,255,.75)) drop-shadow(-5px 0 0 rgba(255,0,60,.6)) drop-shadow(5px 0 0 rgba(0,225,255,.6))}
+  44%{opacity:.7;transform:translate(3px,0) scale(1.006)}
+  100%{opacity:1;transform:none;filter:drop-shadow(0 0 5px rgba(255,255,255,.62)) drop-shadow(0 0 2px rgba(255,255,255,.45))}
+}
+.logo-wrap.slam{animation:logo-slam .68s steps(1,end) both}
+@keyframes logo-scanrun{
+  0%{opacity:0;transform:translateY(0)}
+  6%{opacity:1}
+  94%{opacity:1}
+  100%{opacity:0;transform:translateY(330px)}
+}
+.logo-wrap.scan .logo-scan{animation:logo-scanrun .95s cubic-bezier(.3,0,.7,1) both}
+@keyframes logo-breathe{
+  0%,100%{filter:drop-shadow(0 0 5px rgba(255,255,255,.62)) drop-shadow(0 0 2px rgba(255,255,255,.45))}
+  50%{filter:drop-shadow(0 0 9px rgba(255,255,255,.8)) drop-shadow(0 0 3px rgba(255,255,255,.55))}
+}
+.logo-wrap.settle{opacity:1;animation:logo-breathe 5.6s ease-in-out infinite}
+.logo-wrap.glitch{animation:logo-glitch .34s steps(2,end) 2}
+@keyframes logo-glitch{
+  0%{transform:translate(-5px,2px);filter:drop-shadow(-9px 0 0 rgba(255,0,60,.9)) drop-shadow(9px 0 0 rgba(0,225,255,.9))}
+  50%{transform:translate(5px,-2px);filter:drop-shadow(8px 0 0 rgba(255,0,60,.9)) drop-shadow(-8px 0 0 rgba(0,225,255,.9))}
+  100%{transform:none;filter:none}
+}
+.logo-wrap.dim{opacity:.34;transition:opacity .9s ease}
+
+.rule{display:flex;align-items:center;justify-content:center;gap:14px;margin:26px auto 0;width:760px;
+      opacity:0;transform:scaleX(.2);transition:opacity .5s ease,transform .7s cubic-bezier(.2,.8,.2,1)}
+.rule.on{opacity:1;transform:none}
+.rule i{flex:1;height:1px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.75),transparent)}
+.rule b{width:8px;height:8px;border:1px solid rgba(255,255,255,.85);transform:rotate(45deg);
+        box-shadow:0 0 14px rgba(255,255,255,.7)}
+.subtitle{font-size:19px;letter-spacing:.34em;color:rgba(255,255,255,.82);margin-top:20px;
+          opacity:0;transform:translateY(6px);transition:opacity .7s ease .1s,transform .7s ease .1s}
+.subtitle.on{opacity:1;transform:none}
+.chip{display:inline-block;margin-top:16px;padding:5px 16px;font-family:var(--mono);font-size:12.5px;
+      letter-spacing:.22em;color:var(--tech);border:1px solid rgba(159,216,255,.32);background:rgba(159,216,255,.05);
+      opacity:0;transition:opacity .6s ease .25s}
+.chip.on{opacity:1}
+
+/* ---------- progress ---------- */
+.progress{position:absolute;left:50%;top:716px;width:820px;margin-left:-410px;
+          opacity:0;transform:translateY(10px);transition:opacity .6s ease,transform .6s ease}
+.progress.on{opacity:1;transform:none}
+.progress-head{display:flex;align-items:flex-end;justify-content:space-between}
+.progress-label{font-family:var(--mono);font-size:14px;letter-spacing:.34em;color:var(--dim)}
+.pct{font-family:var(--mono);font-size:52px;font-weight:700;line-height:.86;letter-spacing:.02em;
+     font-variant-numeric:tabular-nums;text-shadow:0 0 26px rgba(255,255,255,.35)}
+.pct i{font-size:22px;font-style:normal;color:var(--dim);margin-left:4px}
+.bar{position:relative;height:7px;margin-top:16px;background:rgba(255,255,255,.12);overflow:hidden}
+.bar::after{content:"";position:absolute;inset:0;border-top:1px solid rgba(255,255,255,.18);border-bottom:1px solid rgba(255,255,255,.18)}
+.fill{position:relative;height:100%;width:0;background:#fff;box-shadow:0 0 22px rgba(255,255,255,.75)}
+.fill .edge{position:absolute;right:0;top:-4px;bottom:-4px;width:3px;background:#fff;box-shadow:0 0 26px 4px rgba(255,255,255,.95)}
+.ticks{position:absolute;inset:0;background-image:repeating-linear-gradient(90deg,rgba(0,0,0,.85) 0 1px,transparent 1px 41px);
+       mix-blend-mode:multiply}
+.progress-foot{display:flex;justify-content:space-between;margin-top:14px;font-family:var(--mono);font-size:14px;
+               letter-spacing:.1em;color:var(--dim)}
+.status .arrow{color:var(--tech);margin-right:10px;font-size:10px;vertical-align:1px;
+               animation:blink 1.05s steps(1,end) infinite}
+.hex{color:rgba(255,255,255,.26)}
+
+.tip{position:absolute;left:50%;top:946px;width:1200px;margin-left:-600px;text-align:center;
+     font-size:16px;letter-spacing:.16em;color:rgba(255,255,255,.44);opacity:0;transition:opacity .8s ease}
+.tip.on{opacity:1}
+.tip.hide{opacity:0}
+
+/* ---------- rabbit ---------- */
+.rabbit{position:absolute;left:1240px;top:790px;width:236px;opacity:0;
+        transform:translate(var(--dx,240px),var(--dy,0px)) scale(var(--s,1));
+        transition:transform .85s cubic-bezier(.22,1.35,.3,1),opacity .5s ease}
+.rabbit.on{--dx:0px;--dy:0px;opacity:1}
+.rabbit.center{--dx:-398px;--dy:-298px;--s:1.6;opacity:1}
+.rabbit.scare{--dx:-398px;--dy:-358px;--s:3.8;opacity:1;transition:transform .3s cubic-bezier(.2,1.15,.3,1),opacity .2s ease}
+.rabbit.off{--dx:1200px;opacity:0;transition:transform .9s cubic-bezier(.5,0,.9,.4),opacity .9s ease .3s}
+.rabbit-hop{position:relative;transform-origin:50% 100%}
+@keyframes hop{
+  0%{transform:translateY(0) scale(1,1)}
+  12%{transform:translateY(0) scale(1.09,.91)}
+  42%{transform:translateY(-46px) scale(.955,1.05)}
+  62%{transform:translateY(-30px) scale(.99,1.01)}
+  84%{transform:translateY(0) scale(1.04,.96)}
+  100%{transform:translateY(0) scale(1,1)}
+}
+.rabbit-hop.hop{animation:hop 1.05s cubic-bezier(.34,.06,.36,.98)}
+.rabbit-hop.hop-big{animation:hop 1.05s cubic-bezier(.34,.06,.36,.98) , wobble 1.05s ease-in-out}
+@keyframes wobble{0%,100%{rotate:0deg}30%{rotate:-3.4deg}70%{rotate:3.4deg}}
+.rabbit-img{width:100%;height:auto;filter:drop-shadow(0 14px 30px rgba(0,0,0,.9))}
+.rabbit-shadow{position:absolute;left:14%;right:14%;bottom:-10px;height:18px;border-radius:50%;
+  background:radial-gradient(ellipse at center,rgba(0,0,0,.95),rgba(0,0,0,0) 72%);
+  animation:shadow-pulse 1.05s cubic-bezier(.34,.06,.36,.98) infinite}
+@keyframes shadow-pulse{0%,100%{transform:scale(1);opacity:.85}42%{transform:scale(.72);opacity:.45}}
+.rabbit-ring{position:absolute;left:50%;top:52%;width:60px;height:60px;margin:-30px 0 0 -30px;border-radius:50%;
+  border:3px solid rgba(255,255,255,.9);opacity:0;pointer-events:none}
+.rabbit-ring.burst{animation:ring .75s cubic-bezier(.15,.7,.3,1) forwards}
+@keyframes ring{0%{opacity:.95;transform:scale(.25)}100%{opacity:0;transform:scale(7.5)}}
+
+/* ---------- 胡萝卜小剧场 ---------- */
+.stage[data-state="run"] .rabbit{cursor:pointer}
+.stage[data-state="run"] .rabbit:hover .rabbit-img{
+  filter:brightness(1.07) drop-shadow(0 0 24px rgba(255,255,255,.3)) drop-shadow(0 14px 30px rgba(0,0,0,.9))}
+.carrot{position:absolute;left:15%;top:10.5%;width:46%;transform-origin:100% 50%;
+  opacity:0;pointer-events:none;transform:rotate(-12deg) scale(.6);
+  filter:drop-shadow(0 0 12px rgba(255,150,60,.42)) drop-shadow(0 6px 12px rgba(0,0,0,.75));
+  transition:transform .26s cubic-bezier(.3,1.4,.4,1),opacity .18s ease}
+.carrot.show{opacity:1}
+.carrot svg{display:block;width:100%;height:auto}
+@keyframes chomp{
+  0%{transform:none}
+  18%{transform:translate(2px,5px) scale(1.025,.95) rotate(-1.6deg)}
+  46%{transform:translate(-1px,1px) scale(.995,1.01) rotate(1.2deg)}
+  74%{transform:translate(1px,3px) scale(1.012,.98) rotate(-.8deg)}
+  100%{transform:none}
+}
+.rabbit-img.chomp{animation:chomp .36s ease-out}
+.float-word{position:absolute;font-family:var(--mono);font-size:15px;letter-spacing:.14em;color:#ffd9a3;
+  text-shadow:0 0 16px rgba(255,170,80,.85);pointer-events:none;white-space:nowrap;z-index:5;
+  animation:float-word .95s ease-out forwards}
+@keyframes float-word{
+  0%{opacity:0;transform:translate(-50%,0) scale(.8)}
+  16%{opacity:1;transform:translate(-50%,-10px) scale(1)}
+  100%{opacity:0;transform:translate(-50%,-48px) scale(.96)}}
+.rabbit-count{position:absolute;left:-8px;top:-26px;font-family:var(--mono);font-size:12.5px;letter-spacing:.18em;
+  color:rgba(255,255,255,.45);white-space:nowrap;opacity:0;transform:translateY(4px);
+  transition:opacity .45s ease,transform .45s ease;pointer-events:none}
+.rabbit-count.on{opacity:1;transform:none}
+.rabbit-count b{color:#ffb765;font-weight:400;text-shadow:0 0 14px rgba(255,170,80,.7)}
+
+/* ---------- dialog ---------- */
+.dialog{position:absolute;left:50%;top:800px;width:1080px;margin-left:-540px;
+        padding:20px 30px 24px;border:1px solid rgba(255,255,255,.22);
+        background:linear-gradient(180deg,rgba(8,12,16,.82),rgba(0,0,0,.72));
+        backdrop-filter:blur(2px);opacity:0;transform:translateY(14px);
+        transition:opacity .45s ease,transform .45s ease}
+.dialog.on{opacity:1;transform:none}
+.dialog::before{content:"";position:absolute;left:-1px;top:-1px;width:16px;height:16px;
+  border-left:2px solid #fff;border-top:2px solid #fff}
+.dialog::after{content:"";position:absolute;right:-1px;bottom:-1px;width:16px;height:16px;
+  border-right:2px solid #fff;border-bottom:2px solid #fff}
+.dialog-name{position:absolute;left:24px;top:-15px;padding:3px 14px;background:#000;border:1px solid rgba(255,255,255,.3);
+  font-family:var(--mono);font-size:13px;letter-spacing:.24em;color:var(--tech)}
+.dialog-text{font-size:24px;line-height:1.55;letter-spacing:.08em;color:#fff;min-height:38px;
+  text-shadow:0 0 18px rgba(255,255,255,.22)}
+.dialog-text .cur{display:inline-block;width:10px;height:22px;background:#fff;margin-left:6px;vertical-align:-3px;
+  animation:blink 1s steps(1,end) infinite}
+
+/* ---------- end card ---------- */
+.endcard{position:absolute;left:50%;top:934px;width:900px;margin-left:-450px;text-align:center;
+         opacity:0;transform:translateY(10px);transition:opacity .8s ease,transform .8s ease;pointer-events:none}
+.endcard.on{opacity:1;transform:none}
+.end-main{font-family:var(--mono);font-size:26px;letter-spacing:.5em;color:#fff;text-shadow:0 0 26px rgba(255,255,255,.5)}
+.end-main b{color:var(--tech);font-weight:400}
+.end-sub{margin-top:12px;font-size:14px;letter-spacing:.24em;color:var(--dim);animation:soft-pulse 2.4s ease-in-out infinite}
+@keyframes soft-pulse{0%,100%{opacity:.5}50%{opacity:1}}
+
+/* 结束页：把"加载完成"这个节拍从被收掉的进度条里挪出来 */
+.beat{position:absolute;left:50%;top:868px;width:900px;margin-left:-450px;text-align:center;
+      font-family:var(--mono);font-size:14px;letter-spacing:.3em;color:rgba(255,255,255,.42);
+      opacity:0;transform:translateY(8px);transition:opacity .9s ease .12s,transform .9s ease .12s;pointer-events:none}
+.beat.on{opacity:1;transform:none}
+
+/* ---------- buttons / frame / fx ---------- */
+.btn{position:absolute;font-family:var(--mono);font-size:14px;letter-spacing:.2em;color:var(--dim);
+     background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.24);padding:9px 18px;cursor:pointer;
+     transition:color .25s,border-color .25s,background .25s,opacity .4s;opacity:0}
+.btn.show{opacity:1}
+.btn:hover{color:#000;background:#fff;border-color:#fff}
+.btn-skip{right:88px;bottom:118px}
+.btn-sound{right:88px;bottom:170px}
+.btn-sound.off{color:rgba(255,255,255,.25)}
+.frame i{position:absolute;width:34px;height:34px;opacity:0;transition:opacity .8s ease .4s}
+.frame i::before,.frame i::after{content:"";position:absolute;background:rgba(255,255,255,.55)}
+.frame i::before{width:100%;height:1px}
+.frame i::after{width:1px;height:100%}
+.frame i:nth-child(1){left:44px;top:44px}
+.frame i:nth-child(2){right:44px;top:44px;transform:rotate(90deg)}
+.frame i:nth-child(3){right:44px;bottom:44px;transform:rotate(180deg)}
+.frame i:nth-child(4){left:44px;bottom:44px;transform:rotate(270deg)}
+.stage.is-run .frame i{opacity:1}
+.flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none}
+.flash.fire{animation:flash-hit .28s ease-out}
+@keyframes flash-hit{0%{opacity:var(--f,.6)}100%{opacity:0}}
+.tear{position:absolute;inset:0;pointer-events:none;opacity:0;
+  background:repeating-linear-gradient(to bottom,rgba(255,255,255,.9) 0 2px,transparent 2px 7px,rgba(255,255,255,.5) 7px 8px,transparent 8px 23px);
+  mix-blend-mode:screen}
+.tear.fire{animation:tear-hit .3s steps(3,end)}
+@keyframes tear-hit{
+  0%{opacity:.0;transform:translateX(0)}
+  20%{opacity:.5;transform:translateX(-22px)}
+  50%{opacity:.32;transform:translateX(17px)}
+  80%{opacity:.2;transform:translateX(-8px)}
+  100%{opacity:0;transform:none}
+}
+.stage.shake{animation:shake .4s cubic-bezier(.36,.07,.19,.97)}
+@keyframes shake{
+  0%,100%{transform:scale(var(--fit)) translate(0,0)}
+  20%{transform:scale(var(--fit)) translate(-9px,4px)}
+  40%{transform:scale(var(--fit)) translate(7px,-6px)}
+  60%{transform:scale(var(--fit)) translate(-5px,3px)}
+  80%{transform:scale(var(--fit)) translate(3px,-2px)}
+}
+
+/* ---------- final state ----------
+   终章原则：兔子登场后，进度条/提示/副标题这些"加载期文字"必须真正退场。
+   之前只降到 .16/.22，于是它们半透明地叠在标题和兔子下面，像渲染重影。
+   另：终章时 .hero 有 transform，hero 会变成层叠上下文，里面的 .subtitle/.chip
+   不再受 .hero.dim 的透明度控制 —— 所以必须单独降它们的 opacity。 */.hero.fade .subtitle,
+.hero.fade .chip{opacity:0;transform:translateY(-8px);transition:opacity .45s ease,transform .45s ease}
+.stage[data-state="finale"] .progress,
+.stage[data-state="end"] .progress,
+.stage[data-state="finale"] .tip,
+.stage[data-state="end"] .tip{opacity:0;transition:opacity .5s ease}
+.stage[data-state="finale"] .progress,
+.stage[data-state="end"] .progress{transform:translateY(10px)}
+/* 终章让兔子独占画面中心：整组"副标题 + 分隔线 + 版本号"一起收掉。
+   只收文字会留下一条孤零零的分隔线飘在空地中间，比留着更难看。 */
+.stage[data-state="finale"] .rule,
+.stage[data-state="end"] .rule{opacity:0;transition:opacity .45s ease}
+/* 终章柔化扫描线，别让细节被网格吃掉 */
+.stage[data-state="finale"] .scanlines,
+.stage[data-state="end"] .scanlines{opacity:.32}
+.stage[data-state="end"]{cursor:pointer}

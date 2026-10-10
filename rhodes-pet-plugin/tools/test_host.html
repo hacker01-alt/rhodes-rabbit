@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>PLUGIN-TEST</title>
+<style>
+html,body{margin:0;height:100%;background:#0d1016;color:#dfe8f5;
+  font-family:"Microsoft YaHei",system-ui,sans-serif}
+#report{position:fixed;left:0;top:0;right:0;padding:12px 16px;font:12px/1.7 Consolas,monospace;
+  color:#9fe6b0;white-space:pre-wrap;z-index:1}
+/* 模拟启动动画的根节点 */
+#boot{position:fixed;inset:0;background:#000;z-index:9999;display:flex;
+  align-items:center;justify-content:center;color:#9fd8ff;font:12px Consolas,monospace;
+  letter-spacing:.3em}
+</style>
+</head>
+<body>
+<div id="report">harness starting…</div>
+<!-- 真实反映启动动画的形态：.rb-root 带 rb-active 表示"正在播" -->
+<div class="rb-root rb-active" id="boot">PRTS BOOT SEQUENCE（模拟启动动画）</div>
+
+<script>
+/* ===== 1) 先把引擎挂到全局：插件里的 RHODES_PET_ENGINE(...) 就靠它 ===== */
+window.__RHODES_PET_NO_AUTO = true;   // 不要自动在 body 上起一只
+</script>
+<script src="../../rhodes-pet/pet.js"></script>
+<script>
+var LOG = [];
+function say(s) { LOG.push(s); document.getElementById('report').textContent = LOG.join('\n'); }
+say('engine type=' + (typeof RHODES_PET_ENGINE));
+
+/* ===== 2) 极简 React 替身：只需要 createElement / useRef / useEffect ===== */
+var effects = [];
+window.ReactStub = {
+  createElement: function (type, props, kids) {
+    return { __el: true, type: type, props: props || {}, kids: kids };
+  },
+  useRef: function (init) { return { current: init }; },
+  useEffect: function (fn) { effects.push(fn); }
+};
+
+/* ===== 3) 模拟 DSH 的模块加载器 ===== */
+var registered = null;
+window.__ModuleLoader__ = {
+  load: function (mod) {
+    say('loader.load id=' + mod.id);
+    var modExport = mod.factory(function (name) {
+      if (name === 'react') return window.ReactStub;
+      throw new Error('unexpected require: ' + name);
+    });
+    say('factory returned: inject=' + JSON.stringify(modExport.inject));
+    var ctx = {
+      slots: {
+        inject: function (slot, cb) {
+          say('slots.inject slot=' + slot);
+          cb();
+        },
+        register: function (meta, comp) {
+          say('slots.register id=' + meta.id + ' order=' + meta.order + ' label=' + meta.label);
+          registered = comp;
+        }
+      }
+    };
+    modExport.apply(ctx);
+    say('apply done; registered=' + (typeof registered));
+  }
+};
+</script>
+
+<script src="../client.js"></script>
+
+<script>
+/* ===== 4) 假装宿主渲染了这个组件，并跑它的 effect ===== */
+(function mount() {
+  if (typeof registered !== 'function') { say('FAIL: 没有注册到组件'); return; }
+  var host = document.createElement('div');
+  host.style.display = 'contents';
+  document.body.appendChild(host);
+  var ref = { current: host };
+  // 我们的替身 useRef 返回新对象，所以要骗一下：让组件拿到这个 ref
+  var origUseRef = window.ReactStub.useRef;
+  window.ReactStub.useRef = function () { return ref; };
+  var tree = registered();
+  window.ReactStub.useRef = origUseRef;
+  say('component returned: ' + (tree && tree.__el ? 'element(' + tree.type + ')' : String(tree)));
+  // 跑 effect
+  effects.forEach(function (fn) { fn(); });
+  say('effects run: ' + effects.length);
+})();
+
+/* ===== 5) 三个时间点分别检查 ===== */
+function countPets() { return document.querySelectorAll('.rp-pet').length; }
+
+setTimeout(function () {
+  say('T+300ms  启动动画还在播（rb-active 在）→ 兔兔数量=' + countPets() + '（期望 0）');
+}, 300);
+
+setTimeout(function () {
+  /* 照 boot 插件 dismiss() 的真实做法：只摘 rb-active、加 rb-fadeout，**元素留在 DOM 里**。
+     这正是第一版判断失误的地方 —— 若插件还在看"节点是否存在"，这里就不会出场，
+     要一直等到 maxWaitMs 兜底才会冒出来。 */
+  var b = document.getElementById('boot');
+  if (b) {
+    b.classList.remove('rb-active');
+    b.classList.add('rb-fadeout');
+  }
+  say('T+900ms  已摘掉 rb-active（= 开始淡出，但节点仍在 DOM 里）');
+}, 900);
+
+setTimeout(function () {
+  say('T+1200ms 兔兔数量=' + countPets() + '（期望 1：一淡出就该出场，不再等）');
+}, 1200);
+
+setTimeout(function () {
+  say('T+1800ms 兔兔数量=' + countPets() + '  layer=' +
+      document.querySelectorAll('.rp-layer').length +
+      '  gear=' + document.querySelectorAll('.rp-gear').length +
+      '  panel=' + document.querySelectorAll('.rp-panel').length);
+  say('手柄 __rhodesPet=' + (typeof window.__rhodesPet));
+  document.title = 'PLUGINTEST|' + LOG.join(' || ');
+}, 1800);
+</script>
+</body>
+</html>
