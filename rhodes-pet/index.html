@@ -573,6 +573,87 @@ if (new URLSearchParams(location.search).get('probe') === 'checkin') {
   }, 300);
 }
 
+/* ?probe=ui —— 两个可用性问题的实测：
+   ① 拖拽喂食的把手在 DOM 里的位置（CSS 用的是 .rp-pet:hover .rp-offer，必须是后代才命中）
+   ② 设置面板打开后，点击外部能不能关闭、点面板内部会不会误关 */
+if (new URLSearchParams(location.search).get('probe') === 'ui') {
+  var U = [];
+  setTimeout(function () {
+    var P = window.RHODES_PET;
+    var pet = document.querySelector('.rp-pet');
+    var offer = document.querySelector('.rp-offer');
+    var panel = document.querySelector('.rp-panel');
+    var gear = document.querySelector('.rp-gear');
+
+    /* ① 把手结构：CSS 规则是 .rp-pet:hover .rp-offer（后代选择器） */
+    U.push('把手在 pet 内=' + pet.contains(offer) +
+      '（后代选择器要求 true，否则 hover 永不显示）');
+    U.push('把手父元素=' + (offer.parentNode.className || offer.parentNode.tagName));
+    /* 把手初始是否可见（opacity） */
+    U.push('把手 opacity=' + getComputedStyle(offer).opacity + '（未悬停时应为 0）');
+
+    /* ①b 硬证据：hover 规则**确实存在于样式表里**且没被浏览器丢弃。
+       （headless 没法真的把鼠标悬上去触发 :hover，所以分两步验证：
+         规则在 + 把手是它的后代 → 浏览器 hover 时必然匹配。） */
+    var hoverRule = '';
+    for (var si = 0; si < document.styleSheets.length; si++) {
+      var rules;
+      try { rules = document.styleSheets[si].cssRules; } catch (e) { continue; }
+      for (var ri = 0; ri < rules.length; ri++) {
+        var sel = rules[ri].selectorText || '';
+        if (sel.indexOf('.rp-pet:hover') >= 0 && sel.indexOf('.rp-offer') >= 0) {
+          hoverRule = sel + ' { ' + (rules[ri].style.cssText || '') + ' }';
+        }
+      }
+    }
+    U.push('悬停规则=' + (hoverRule || '未找到!'));
+    /* 把手可见性确实受类名控制：加上 rp-out 后 opacity 应为 1。
+       注意要先禁用过渡再读 —— .rp-offer 有 transition:opacity .2s，
+       加完类立刻读 computed 会拿到过渡起始值（0），headless 又不推进过渡，
+       会误判成"CSS 没生效"（这个坑踩过一次）。 */
+    offer.style.transition = 'none';
+    offer.classList.add('rp-out');
+    var opForced = getComputedStyle(offer).opacity;
+    offer.classList.remove('rp-out');
+    offer.style.transition = '';
+    U.push('加 rp-out 后 opacity=' + opForced + '（期望 1，证明 CSS 能控制它的可见性）');
+    var cssOk = !!hoverRule && opForced === '1';
+
+    /* ② 点外部关面板 */
+    P.openPanel();
+    U.push('打开面板 on=' + panel.classList.contains('on'));
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    var afterBody = panel.classList.contains('on');
+    U.push('点 body 后 on=' + afterBody + '（期望 false）');
+
+    /* ③ 点面板内部不该关 */
+    P.openPanel();
+    panel.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    var afterInside = panel.classList.contains('on');
+    U.push('点面板内后 on=' + afterInside + '（期望 true）');
+
+    /* ④ 点齿轮不该关（它是开关，自己会切） */
+    P.openPanel();
+    gear.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    var afterGear = panel.classList.contains('on');
+    U.push('点齿轮后 on=' + afterGear + '（期望 true，齿轮自己才切）');
+
+    /* ⑤ 点「喂一根」应：关掉面板 + 把把手强制显示出来 */
+    P.openPanel();
+    var feedBtn = panel.querySelector('#rp-act-feed');
+    feedBtn.click();
+    var afterFeedBtn = panel.classList.contains('on');
+    var offerShown = offer.classList.contains('rp-out');
+    U.push('点喂一根后 面板on=' + afterFeedBtn + '（期望 false）把手强显=' +
+      offerShown + '（期望 true）');
+    var feedOk = !afterFeedBtn && offerShown;
+
+    var pass = pet.contains(offer) && cssOk && !afterBody && afterInside && afterGear && feedOk;
+    U.push('结论: ' + (pass ? 'PASS' : 'FAIL'));
+    document.title = 'UIPROBE|' + U.join(' | ');
+  }, 600);
+}
+
 /* ?probe=level —— 验证等级/好感机制：连喂直到升级，看数值、进度条、台词池 */
 if (new URLSearchParams(location.search).get('probe') === 'level') {
   var K = [];

@@ -552,8 +552,12 @@ function RHODES_PET_ENGINE(opts) {
     '.rp-carrot svg{display:block;width:100%;height:auto}',
 
     /* 拖拽喂食用的胡萝卜：平时待在兔兔旁边当"把手"，可以按住拖走。
-       它是 .rp-pet 的子元素、position:fixed —— 因为它是 fixed，视口坐标就不受
-       .rp-pet 的 transform 影响；同时又能吃到 .rp-pet:hover 的显示规则。
+       **必须是 .rp-pet 的子元素** —— 显示规则用的是 `.rp-pet:hover .rp-offer`（后代选择器），
+       挂在外面（比如 .rp-layer）就永远不匹配，把手会一直是 opacity:0、用户根本看不见它。
+       （踩过：代码把它挂在 layer 上，注释却写着"是 .rp-pet 的子元素"，两边不一致一直没发现，
+         因为测试都用 ?offer=1 强制显示，绕过了 hover 这条路径。）
+       定位用**相对兔兔的局部坐标** + position:absolute（继承 .rp-carrot 的 absolute），
+       这样兔兔移动时把手自动跟随，不用每帧去写 left/top。
        加了圆底 + 边框，否则一根小胡萝卜浮在深色界面上会糊成一团、看不出能拖。 */
     '.rp-offer{left:0;top:0;right:auto;width:68px;height:68px;border-radius:50%;',
     '  display:flex;align-items:center;justify-content:center;',
@@ -774,8 +778,9 @@ function RHODES_PET_ENGINE(opts) {
   var carrotBody = carrot.querySelector('.rp-body');
   var carrotLeaves = carrot.querySelector('.rp-leaves');
   /* 拖拽喂食用的那根胡萝卜（单独一个元素，不跟"正在吃"那根共用：
-     一个是被拖动的，一个是贴在嘴边的，混用会在状态切换时打架）。 */
-  var carrotHandle = el('div', 'rp-carrot rp-offer', layer);
+     一个是被拖动的，一个是贴在嘴边的，混用会在状态切换时打架）。
+     注意父节点是 **pet** 而不是 layer —— 见上面 CSS 里的说明。 */
+  var carrotHandle = el('div', 'rp-carrot rp-offer', pet);
   carrotHandle.title = '按住拖到兔兔嘴边喂它';
   /* 把手用**专属**的小图标，不复用嘴里那根：
      嘴里那根是"细长楔形 + 渐变 + 滤镜"，缩到 60px 级别时橙色主体几乎渲染不出来
@@ -844,29 +849,29 @@ function RHODES_PET_ENGINE(opts) {
   var offerDrag = null;                     // 拖动中：{ id, x, y }
   var offerPos = { x: 0, y: 0 };            // 把手当前位置（视口坐标）
 
-  /* 算把手的落点：默认放兔兔右侧，右边放不下就翻到左侧。
-     这一步是必须的 —— 兔兔默认就贴在右下角，右侧根本没有空间，
-     不翻边的话把手会直接被视口裁掉，用户永远看不到它（踩过）。 */
-  function offerSpot(r) {
-    var rightSide = r.right + OFFER_GAP;
-    if (rightSide + OFFER_SIZE <= window.innerWidth - 4) {
-      return { x: rightSide, y: r.top + r.height * 0.55 - OFFER_SIZE / 2 };
+  /* 算把手相对**兔兔**的落点（局部坐标，不是视口坐标 —— 把手是兔兔的子元素）：
+     默认放兔兔右侧，右边放不下就翻到左侧。
+     翻边判定仍然要看视口：兔兔默认贴在右下角，右侧没有空间，
+     不翻边的话把手会被视口裁掉，用户永远看不到（踩过）。 */
+  function offerSpot() {
+    var localX = S.W + OFFER_GAP;                     // 右侧
+    var pr = pet.getBoundingClientRect();
+    if (pr.right + OFFER_GAP + OFFER_SIZE > window.innerWidth - 4) {
+      localX = -OFFER_GAP - OFFER_SIZE;               // 翻到左侧
     }
-    return { x: Math.max(4, r.left - OFFER_GAP - OFFER_SIZE),
-             y: r.top + r.height * 0.55 - OFFER_SIZE / 2 };
+    return { x: localX, y: S.H * 0.55 - OFFER_SIZE / 2 };
   }
 
   function place() {
     pet.style.transform = 'translate3d(' + S.x.toFixed(1) + 'px,' + S.y.toFixed(1) + 'px,0) scale(' + DEBUG.scale + ')';
-    /* 把手挂在兔兔旁边，兔兔一动它也要跟着。
-       这里刻意做得便宜：位置没变就跳过 DOM 写入 —— place() 在跟随/溜达时每帧都会被调用。 */
-    if (carrotHandle) {
-      var sp = offerSpot(pet.getBoundingClientRect());
+    /* 把手是兔兔的子元素，兔兔移动时它自动跟随 —— 这里只需要在"翻边判定可能变了"时
+       更新一次落点（窗口尺寸、兔兔位置变化都会影响右侧还有没有空间）。
+       拖动中不抢位置：那时候把手跟着光标走。 */
+    if (carrotHandle && !offerDrag) {
+      var sp = offerSpot();
       offerPos.x = sp.x; offerPos.y = sp.y;
-      if (!offerDrag) {
-        carrotHandle.style.left = sp.x.toFixed(1) + 'px';
-        carrotHandle.style.top = sp.y.toFixed(1) + 'px';
-      }
+      carrotHandle.style.left = sp.x.toFixed(1) + 'px';
+      carrotHandle.style.top = sp.y.toFixed(1) + 'px';
     }
   }
 
@@ -905,14 +910,16 @@ function RHODES_PET_ENGINE(opts) {
   /* ======================= 拖拽喂食（逻辑） =======================
      状态（OFFER_GAP / offerDrag / offerPos）在上面声明，因为 place() 要用。 */
 
-  /* 把手位置：视口坐标（它是 position:fixed，所以用视口坐标，不受父级 transform 影响） */
+  /* 把手位置跟着 place() 一起更新（它是兔兔的子元素，用的是相对兔兔的局部坐标） */
   function positionOffer() { place(); }
   function offerRollback() {
     carrotHandle.classList.remove('rp-grab');
-    carrotHandle.style.left = offerPos.x.toFixed(1) + 'px';
-    carrotHandle.style.top = offerPos.y.toFixed(1) + 'px';
+    var sp = offerSpot();
+    offerPos.x = sp.x; offerPos.y = sp.y;
+    carrotHandle.style.left = sp.x.toFixed(1) + 'px';
+    carrotHandle.style.top = sp.y.toFixed(1) + 'px';
   }
-  /* 松手时判定：光标是否落在兔兔身上 */
+  /* 松手时判定：光标是否落在兔兔身上（入参是视口坐标） */
   function hitPet(clientX, clientY) {
     var r = pet.getBoundingClientRect();
     return clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom;
@@ -921,14 +928,19 @@ function RHODES_PET_ENGINE(opts) {
     if (S.eat) return;                      // 正在啃就不接新的
     offerDrag = { id: ev.pointerId, x: offerPos.x, y: offerPos.y };
     carrotHandle.classList.add('rp-grab');
-    if (carrotHandle.setPointerCapture) carrotHandle.setPointerCapture(ev.pointerId);
+    /* 和兔兔拖动一样：捕获失败不该影响拖动本身 */
+    try { if (carrotHandle.setPointerCapture) carrotHandle.setPointerCapture(ev.pointerId); } catch (e) { /* noop */ }
     Sfx.resume();
     ev.preventDefault();
     ev.stopPropagation();
-  }  function offerMove(ev) {
+  }
+  function offerMove(ev) {
     if (!offerDrag || ev.pointerId !== offerDrag.id) return;
-    carrotHandle.style.left = (ev.clientX - 34).toFixed(1) + 'px';     // 光标大致落在圆盘中间
-    carrotHandle.style.top = (ev.clientY - 34).toFixed(1) + 'px';
+    /* 视口坐标 → 兔兔的局部坐标（把手是兔兔的子元素，left/top 相对兔兔左上角） */
+    var pr = pet.getBoundingClientRect();
+    var sc = DEBUG.scale || 1;
+    carrotHandle.style.left = ((ev.clientX - pr.left) / sc - OFFER_SIZE / 2).toFixed(1) + 'px';
+    carrotHandle.style.top = ((ev.clientY - pr.top) / sc - OFFER_SIZE / 2).toFixed(1) + 'px';
     pet.classList.toggle('rp-mouth', hitPet(ev.clientX, ev.clientY));
   }
   function offerEnd(ev) {
@@ -940,10 +952,22 @@ function RHODES_PET_ENGINE(opts) {
     if (ev && hitPet(x, y) && feed()) {
       /* 喂成功：把手先按住不动，等"正在吃"那根胡萝卜飞进嘴里，它再自己飘回去。
          这样视觉上是"我把它递过去了"，而不是两根胡萝卜同时消失。 */
+      clearTimeout(S.offerFlash);            // 已经喂上了，不用再"强制显示"
+      carrotHandle.classList.remove('rp-out');
       setTimeout(offerRollback, 480);
     } else {
       offerRollback();
     }
+  }
+  /* 强制把把手显示一段时间（正常情况下它是靠 .rp-pet:hover 显示的）。
+     用途：面板里的「喂一根」要引导用户去拖 —— 那时鼠标在面板按钮上、不在兔兔身上，
+     不加这个的话把手根本不会出现，用户不知道该拖什么。 */
+  function flashOffer(ms) {
+    carrotHandle.classList.add('rp-out');
+    clearTimeout(S.offerFlash);
+    S.offerFlash = setTimeout(function () {
+      carrotHandle.classList.remove('rp-out');
+    }, ms || 4000);
   }
   carrotHandle.addEventListener('pointerdown', offerStart);
   carrotHandle.addEventListener('pointermove', offerMove);
@@ -1410,7 +1434,14 @@ function RHODES_PET_ENGINE(opts) {
     bindSwitch('talk', 'talk');
     bindSwitch('feed', 'autoFeed', function () { scheduleAutoFeed(); });
 
-    panel.querySelector('#rp-act-feed').addEventListener('click', function () { feed(); });
+    /* 「喂一根」：**关掉面板 + 把胡萝卜把手显示出来**，引导用户自己去拖。
+       为什么不直接 feed()：面板会挡住兔兔，关掉才看得见喂食动作；
+       而"把胡萝卜拖到它嘴边"本来就是这个桌宠的核心互动，值得让用户亲手做一次。
+       （要"点一下立刻喂"的快捷路径，桌宠自己的自动投喂开关仍然在。） */
+    panel.querySelector('#rp-act-feed').addEventListener('click', function () {
+      togglePanel(false);
+      flashOffer(5000);
+    });
     panel.querySelector('#rp-act-reset').addEventListener('click', function () {
       S.x = window.innerWidth - S.W - 40;
       S.y = window.innerHeight - S.H - 20;
@@ -1509,7 +1540,7 @@ function RHODES_PET_ENGINE(opts) {
   gear.addEventListener('pointerdown', function (ev) { ev.stopPropagation(); });
   gear.addEventListener('click', function (ev) { ev.stopPropagation(); togglePanel(); });
   panel.addEventListener('pointerdown', function (ev) { ev.stopPropagation(); });
-  document.addEventListener('pointerdown', onDocDown);
+  document.addEventListener('pointerdown', onDocDown, true);   // 捕获阶段，见 onDocDown 的说明
 
   /* ======================= 自动喂食 ======================= */
   function scheduleAutoFeed() {
@@ -1653,8 +1684,18 @@ function RHODES_PET_ENGINE(opts) {
   function onKey(ev) {
     if (ev.key === 'Escape' && panel.classList.contains('on')) togglePanel(false);
   }
+  /* 点击面板外的**任意位置** → 关闭面板。
+     用**捕获阶段**（注册时第三个参数传 true）：DSH 界面里的元素（React 组件、输入框、
+     各种挂件）可能在冒泡阶段调 stopPropagation，挂在冒泡阶段就收不到事件，
+     表现成"面板打开后点别处关不掉"。捕获阶段在事件往下传时就触发，
+     不受子元素 stopPropagation 的影响。 */
   function onDocDown(ev) {
-    if (panel.classList.contains('on') && !panel.contains(ev.target) && ev.target !== gear) togglePanel(false);
+    if (!panel.classList.contains('on')) return;
+    var t = ev.target;
+    if (!t || t.nodeType !== 1) return;
+    if (panel.contains(t)) return;                                  // 点面板内部：不关
+    if (gear && (t === gear || gear.contains(t))) return;           // 点齿轮：它自己是开关
+    togglePanel(false);
   }
   function onFirstPointer() { Sfx.resume(); window.removeEventListener('pointerdown', onFirstPointer); }
   /* 跟着鼠标：只在开启时记录坐标，循环里再做平滑跟随。
