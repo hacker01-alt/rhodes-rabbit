@@ -26,6 +26,15 @@ window.__ModuleLoader__.load({
          兔兔实际是被下面的 maxWaitMs 兜底放出来的 —— 表现就是"打开后要等一分钟"。 */
       waitForBoot: true,
       bootBusySelectors: ['.rb-root.rb-active', '#rb-boot-cover'],
+      /* 启动动画"退场" ≠ "已经消失"，两者差着一次淡出：
+         boot 的 dismiss() 只是摘掉 rb-active、加上 rb-fadeout，
+         而淡出本身还要 600ms（.rb-root.rb-fadeout .rb-stage{transition:opacity .6s ease}），
+         节点更要等 React 卸载才移除。
+         所以看到"不再忙"之后必须再等一个淡出时长，否则兔兔会在动画**正在淡出**时冒出来 ——
+         表现就是"启动动画快结束了，桌宠就已经出现了"。
+         （boot 那边有一条 suppressOthers 会把画面上的挂件压到淡出结束，
+           但它的白名单里只有余额鲸鱼挂件、没有桌宠；而且出场时机本来就该由桌宠自己负责。） */
+      bootFadeMs: 700,        // 略大于 boot 的 600ms 淡出，确保画面真的干净了
       startDelayMs: 0,        // 启动动画一退场就出场，不再额外等待
       maxWaitMs: 15000,       // 兜底：等不到也出场，但绝不至于卡到一分钟
       /* 出场方式二选一：landMs > 0 走"落地"，否则走 fadeInMs 的淡入。
@@ -2114,12 +2123,27 @@ window.__ModuleLoader__.load({
           });
           window.__rhodesPet = pet;   // 控制台手柄：__rhodesPet.feed() / .talk() / .openPanel()
         }
-        /* 60ms 一次的短轮询：动画一淡出，最多晚 60ms 就出场。
+        /* 60ms 一次的短轮询：动画一淡完，最多晚 60ms 就出场。
            刻意不用 requestAnimationFrame —— 它在这里的调度时机不可靠（实测过：
-           rAF 循环跑不起来，兔兔就永远不出来），setTimeout 才是稳的。 */
+           rAF 循环跑不起来，兔兔就永远不出来），setTimeout 才是稳的。
+
+           "不忙了"之后还要再过 bootFadeMs 才真出场（见 SETTINGS 里的说明）。
+           用 sawBoot 区分两种情况：
+             · 见过动画在播  → 它刚退场，等淡出走完再出来
+             · 从没见过      → 这台机器没装启动动画（或它早就播完了），直接出场、不白等 */
+        let sawBoot = false;
+        let bootClearedAt = 0;
+
         function watch() {
           if (cancelled || pet) return;
-          if (!bootBusy() || Date.now() - started > SETTINGS.maxWaitMs) { spawn(); return; }
+          const busy = bootBusy();
+          if (busy) sawBoot = true;
+          if (Date.now() - started > SETTINGS.maxWaitMs) { spawn(); return; }
+          if (!busy) {
+            if (!sawBoot) { spawn(); return; }
+            if (!bootClearedAt) bootClearedAt = Date.now();
+            if (Date.now() - bootClearedAt >= SETTINGS.bootFadeMs) { spawn(); return; }
+          }
           timer = window.setTimeout(watch, 60);
         }
 

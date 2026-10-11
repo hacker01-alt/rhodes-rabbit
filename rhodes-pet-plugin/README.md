@@ -33,36 +33,55 @@ DSH 的**罗德岛兔兔桌宠**插件：一只浮在 Harness 界面上的兔兔
 
 ## 什么时候出场
 
-默认 `waitForBoot: true`：用 60ms 的短轮询盯着 `bootBusySelectors`（默认 `['.rb-root.rb-active', '#rb-boot-cover']`），
-**这些"正在播"的标记全都消失**才创建兔兔。所以：
+默认 `waitForBoot: true`：用 60ms 的短轮询盯着 `bootBusySelectors`（默认 `['.rb-root.rb-active', '#rb-boot-cover']`）。
+所以：
 
 - 启动动画还在播 → 兔兔不出现（不会跟动画叠在一起）
-- 启动动画开始淡出（`rb-active` 被摘掉）→ **最多 60ms 后**兔兔出场
-- 压根没装启动动画 / 找不到那些标记 → 立刻出场
+- 启动动画**退场、并且淡出干净**之后 → 兔兔出场
+- 压根没装启动动画 / 找不到那些标记 → **立刻**出场（不白等）
 - 兜底：最多等 `maxWaitMs`（默认 15s），超时也出场
 
-### 这里有个坑，记一下
+### 两个坑，都踩过
 
-判断依据必须是**"正在播"的标记（`.rb-root.rb-active`）**，不能是"`.rb-root` 这个节点还在不在"。
+**坑一：判断依据不能是"节点还在不在"。**
 
-boot 插件的 `dismiss()` 只做两件事：给 `.rb-root` 加 `rb-fadeout`、摘掉 `rb-active` ——
-**节点本身一直留在 DOM 里**，要等 React 卸载组件时才 `remove()`。
-第一版正是按"节点消失"判断的，于是那个条件几乎永远不成立，
-兔兔实际是被 `maxWaitMs` 兜底放出来的 —— 表现出来就是"打开后要等一分钟才出现"。
+必须是**"正在播"的标记**（`.rb-root.rb-active`）。boot 的 `dismiss()` 只做两件事：
+给 `.rb-root` 加 `rb-fadeout`、摘掉 `rb-active` —— **节点本身一直留在 DOM 里**，
+要等 React 卸载组件时才 `remove()`。
+第一版按"节点消失"判断，那个条件几乎永远不成立，
+兔兔实际是被 `maxWaitMs` 兜底放出来的 —— 表现是"打开后要等一分钟才出现"。
+
+**坑二：退场 ≠ 已经消失，中间差着一次淡出。**
+
+摘掉 `rb-active` 只是**开始淡出**，画面还要 **600ms** 才淡干净
+（`.rb-root.rb-fadeout .rb-stage{transition:opacity .6s ease}`）。
+只按坑一修完，兔兔就会在**动画正在淡出**的时候冒出来 ——
+用户看到的是"启动动画快结束了，桌宠就已经出现了"。
+所以"不忙"之后还要再等一个 `bootFadeMs`（默认 700ms，略大于 600ms）：
+
+    if (!busy) {
+      if (!sawBoot) { spawn(); return; }                        // 没装动画 → 立刻出
+      if (!bootClearedAt) bootClearedAt = Date.now();
+      if (Date.now() - bootClearedAt >= SETTINGS.bootFadeMs) { spawn(); return; }
+    }
+
+`sawBoot` 用来区分"见过动画在播"和"这台机器没装动画"，后者直接出场、不白等。
+
+> boot 那边有一条 `suppressOthers` 会把画面上的挂件压到淡出结束，
+> 但它的白名单里**只有余额鲸鱼挂件、没有桌宠** —— 而且出场时机本来就该由桌宠自己负责，
+> 所以没去动它的白名单。
 
 另外等待循环用的是 `setTimeout` 而不是 `requestAnimationFrame`：实测 rAF 在这里的调度时机不可靠，
 拿它做等待循环会导致兔兔永远不出来（踩过）。
 
-### 出场动画：落地
+### 出场动画：淡入（不是落地）
 
-启动动画最后那只兔子是**退场**的，所以桌宠用"从上方落下来"接住它，而不是凭空出现。
+出场是 **140ms 淡入 + 从下往上 16px 的轻微上浮**（`fadeInMs`）。
 
-- 总时长 **360ms**（`landMs`），要求是"时间比较短"
-- 下落占前 60%：ease-in，越落越快，同时轻微**拉长**
-- 触地占后 40%：**压扁**再阻尼回弹（一次性振荡，不分段）
-- 落点精确归位，之后交还给呼吸循环
+> 落地动画只留给"拖动松手"（抓取-落地是一组动作），出场再用一次就重复了。
+> 落地的实现还留在 `pet.js` 里，`?land=` 与 `RHODES_PET.drop()` 仍可用于调试。
 
-实测位置曲线（`?probe=land`）：
+落地那套的实测位置曲线（`?probe=land`，现在只有调试入口会走到）：
 
 ```
 top: 435 → 448 → 476 → 517 → 568 → 612 → 607 → 603 → 602
@@ -78,11 +97,12 @@ top: 435 → 448 → 476 → 517 → 568 → 612 → 607 → 603 → 602
 ```js
 waitForBoot: true,
 bootBusySelectors: ['.rb-root.rb-active', '#rb-boot-cover'],
+bootFadeMs: 700,        // 退场后再等一个淡出时长，见上面的"坑二"
 startDelayMs: 0,        // 启动动画一退场就出场，不再额外等待
 maxWaitMs: 15000,       // 等待上限（第二道保险）
-landMs: 360,            // 落地动画时长；0 = 不用落地
+landMs: 0,              // 0 = 出场不用落地（落地只留给拖动松手）
 dropFrom: 0,            // 下落高度；0 = 按窗口高度自动取（约 22vh、最多 220px）
-fadeInMs: 0,            // 只在 landMs 为 0 时生效（淡入方式）
+fadeInMs: 140,          // 出场淡入时长（landMs 为 0 时生效）
 ```
 
 ## 控制台手柄

@@ -22,6 +22,14 @@ html,body{margin:0;height:100%;background:#0d1016;color:#dfe8f5;
 <script>
 /* ===== 1) 先把引擎挂到全局：插件里的 RHODES_PET_ENGINE(...) 就靠它 ===== */
 window.__RHODES_PET_NO_AUTO = true;   // 不要自动在 body 上起一只
+
+/* ?noboot=1 —— 模拟"这台机器没装启动动画"：把 #boot 拆掉。
+   期望：兔兔**立刻**出场，不能傻等 bootFadeMs。
+   （这条路径靠 sawBoot 区分：从没见过动画在播 = 没装，直接出来。） */
+if (new URLSearchParams(location.search).get('noboot') === '1') {
+  var b0 = document.getElementById('boot');
+  if (b0 && b0.parentNode) b0.parentNode.removeChild(b0);
+}
 </script>
 <script src="../../rhodes-pet/pet.js"></script>
 <script>
@@ -97,28 +105,36 @@ setTimeout(function () {
 
 setTimeout(function () {
   /* 照 boot 插件 dismiss() 的真实做法：只摘 rb-active、加 rb-fadeout，**元素留在 DOM 里**。
-     这正是第一版判断失误的地方 —— 若插件还在看"节点是否存在"，这里就不会出场，
-     要一直等到 maxWaitMs 兜底才会冒出来。 */
+     这里有两个坑，都踩过：
+       ① 若插件按"节点是否存在"判断，条件永远不成立，要等到 maxWaitMs 兜底才冒出来；
+       ② 光看 rb-active 也不够 —— 摘掉它只是**开始淡出**，画面还要 600ms 才淡干净。
+          按 ① 修完之后兔兔会在"动画正在淡出"时出现（用户看到的就是"快结束时桌宠就出来了"），
+          所以插件在"不忙"之后还要再等 bootFadeMs。 */
   var b = document.getElementById('boot');
   if (b) {
     b.classList.remove('rb-active');
     b.classList.add('rb-fadeout');
   }
-  say('T+900ms  已摘掉 rb-active（= 开始淡出，但节点仍在 DOM 里）');
+  say('T+900ms  已摘掉 rb-active（= 开始淡出，节点仍在 DOM 里）');
 }, 900);
 
 setTimeout(function () {
-  say('T+1200ms 兔兔数量=' + countPets() + '（期望 1：一淡出就该出场，不再等）');
-}, 1200);
+  /* 关键断言：刚摘掉 rb-active 的这一瞬**不能**出场 —— 画面还在淡出 */
+  say('T+1050ms 兔兔数量=' + countPets() + '（期望 0：还在淡出，不能提前冒出来）');
+}, 1050);
 
 setTimeout(function () {
-  say('T+1800ms 兔兔数量=' + countPets() + '  layer=' +
+  say('T+1750ms 兔兔数量=' + countPets() + '（期望 1：淡出走完（600ms）后才出场）');
+}, 1750);
+
+setTimeout(function () {
+  say('T+2200ms 兔兔数量=' + countPets() + '  layer=' +
       document.querySelectorAll('.rp-layer').length +
       '  gear=' + document.querySelectorAll('.rp-gear').length +
       '  panel=' + document.querySelectorAll('.rp-panel').length);
   say('手柄 __rhodesPet=' + (typeof window.__rhodesPet));
   document.title = 'PLUGINTEST|' + LOG.join(' || ');
-}, 1800);
+}, 2200);
 </script>
 </body>
 </html>
