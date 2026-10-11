@@ -514,6 +514,39 @@ window.addEventListener('rhodes-pet:levelup', (e) => {
 
 这不是"每次启动都清零"——那种做法会把用户的进度一起抹掉。
 
+### ⚠ 踩过的坑：调试参数默认值把用户存档清零了
+
+**症状**：重启 Harness 后，**等级、好感、胡萝卜库存都在，唯独「已吃」归零**。
+
+**原因**：`DEBUG.fed` 在插件模式下（`debug:false`）被写成了默认值 `0` 而不是 `null`：
+
+```js
+fed: USE_QUERY ? Number(Q.fed || 0) : 0,          // ✗ 0 != null 成立
+```
+
+而消费它的那句判断是：
+
+```js
+if (DEBUG.fed != null && isFinite(DEBUG.fed)) cfg.eatCount = ...;   // 于是每次都执行
+```
+
+`0 != null` 是**成立**的、`isFinite(0)` 也是 —— 所以每次启动都会把 `eatCount` 赋成 0。
+`xp` / `aff` / `supply` 用的都是 `: null`，所以它们没事（这也是"只有已吃归零"的原因）。
+
+**修复**：跟其它参数统一成 `null`。
+
+```js
+fed: USE_QUERY && Q.fed != null ? Number(Q.fed) : null,   // ✓
+```
+
+**教训**：调试参数在**关闭调试时**的默认值必须让"消费它的判断"为假。
+用 `0` / `''` 这类"看起来无害"的值很危险，因为 `!= null` 会放过它们。
+`?probe=nodebug` 就是为此加的回归测试：它用 `debug:false` 起一个引擎，
+断言存档里的 `eatCount` / `xp` / `affection` **一个都不能被改动**。
+
+> 这个测试也验证过"它真的能抓到 bug"：把 `fed` 临时改回 `: 0` 后，探针会如实报 FAIL
+> （`eatCount=0`，而 `xp`/`aff` 正常）—— 精确复现了用户看到的症状。
+
 ## 台词 / 飘词怎么改
 
 全在 `pet.js` 顶部的 `WORDS` 里，按情绪分了池、颜色也不同：
@@ -608,6 +641,7 @@ index.html?follow=1&probe=follow      跟随是否真的在动、边界是否夹
 index.html?probe=ui                   把手 DOM 结构、面板点外关闭、点「喂一根」的行为
 index.html?probe=sound                抓取/放下音效是否真的响、响的是哪个、单击不误响
 index.html?probe=face                 拖胡萝卜出口水、松手收起、吃完冒腮红
+index.html?probe=nodebug              debug:false 时不能改动用户存档（见上面的坑）
 index.html?probe=dragdrop             拖动松手有一记落地并归位
 index.html?probe=checkin              每日签到 + 出场提醒
 ```

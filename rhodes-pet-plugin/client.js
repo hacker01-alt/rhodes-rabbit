@@ -240,7 +240,13 @@ window.__ModuleLoader__.load({
       }
       var DEBUG = {
         panel: USE_QUERY && Q.panel === '1',
-        fed: USE_QUERY ? Number(Q.fed || 0) : 0,
+        /* ⚠ 这里必须是 null，不能是 0。
+           下面有一句 `if (DEBUG.fed != null && isFinite(...)) cfg.eatCount = ...`，
+           而 0 != null 是**成立**的 —— 于是插件模式（debug:false）下每次启动都会执行
+           那句赋值，把"累计吃了几根"清成 0。
+           xp / aff / supply 用的都是 null 所以没事，只有 fed 当初写成了 0。
+           症状：重启后等级、好感、胡萝卜库存都在，唯独"已吃"归零。 */
+        fed: USE_QUERY && Q.fed != null ? Number(Q.fed) : null,
         scale: USE_QUERY ? Number(Q.scale || 1) : 1,
         state: (USE_QUERY && Q.state) || '',
         freeze: USE_QUERY && Q.freeze === '1',   // 停掉主动画循环（截图时避免抖动）

@@ -832,6 +832,47 @@ if (new URLSearchParams(location.search).get('probe') === 'face') {
   }, 500);
 }
 
+/* ?probe=nodebug —— 回归测试：**插件模式（debug:false）下不能动用户存档**。
+   起因是一个真实 bug：DEBUG.fed 在插件模式下默认成 0（而不是 null），
+   而消费它的那句是 `if (DEBUG.fed != null) cfg.eatCount = ...` —— 0 != null 成立，
+   于是每次启动都把"已吃"清零（等级/好感/库存都正常，所以很久没被发现）。
+   这个探针就用 debug:false 起一个引擎，看存档里的值有没有被改。 */
+if (new URLSearchParams(location.search).get('probe') === 'nodebug') {
+  var NB = [];
+  setTimeout(function () {
+    var KEY = 'dsh-rhodesPet.config';
+    /* 摆一份"用户玩了一阵"的存档 */
+    localStorage.setItem(KEY, JSON.stringify({
+      size: 158, xp: 500, affection: 66, eatCount: 42
+    }));
+
+    /* 插件就是这么起引擎的：debug:false */
+    var host = document.createElement('div');
+    host.style.cssText = 'position:fixed;left:-9999px;top:-9999px';
+    document.body.appendChild(host);
+    var p2 = window.RHODES_PET_ENGINE({
+      container: host, debug: false, fadeIn: 0, landMs: 0, dropFrom: 0
+    });
+
+    var st = p2.config;
+    NB.push('debug:false 起引擎后: eatCount=' + st.eatCount + '（期望 42）' +
+      ' xp=' + st.xp + '（期望 500） aff=' + st.affection + '（期望 66）');
+
+    var raw = {};
+    try { raw = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { }
+    NB.push('存回 localStorage 的: eatCount=' + raw.eatCount + '（期望 42）');
+
+    var eatOk = st.eatCount === 42;
+    var xpOk = st.xp === 500 && st.affection === 66;
+    var diskOk = raw.eatCount === 42;
+    var pass = eatOk && xpOk && diskOk;
+    NB.push('结论: ' + (pass ? 'PASS' : 'FAIL ' + JSON.stringify({
+      已吃没被清零: eatOk, 等级好感保留: xpOk, 存档没被改写: diskOk
+    })));
+    document.title = 'NODEBUGPROBE|' + NB.join(' | ');
+  }, 400);
+}
+
 /* ?probe=level —— 验证等级/好感机制：连喂直到升级，看数值、进度条、台词池 */
 if (new URLSearchParams(location.search).get('probe') === 'level') {
   var K = [];
