@@ -873,7 +873,7 @@ if (new URLSearchParams(location.search).get('probe') === 'nodebug') {
   }, 400);
 }
 
-/* ?probe=paneldrag —— 验证设置面板能拖动、位置会被记住、双击标题能回到自动跟位 */
+/* ?probe=paneldrag —— 验证设置面板"任意位置"能拖、控件上不能拖、位置会记住、双击能复位 */
 if (new URLSearchParams(location.search).get('probe') === 'paneldrag') {
   var PD = [];
   setTimeout(function () {
@@ -881,12 +881,10 @@ if (new URLSearchParams(location.search).get('probe') === 'paneldrag') {
     /* 面板是懒构建的：必须**先打开**才会生成 DOM，然后才能查到元素 */
     P.openPanel();
     var panel = document.querySelector('.rp-panel');
-    var h = panel.querySelector('h4');
     /* 面板打开时有一段 transform 过渡（.18s），过渡没走完时 getBoundingClientRect
        读到的是中间态，位移会算歪（实测差 6px/17px）。这里先把它掐掉再量。
        注意这只影响测量 —— 真实使用中那 0.18s 里没人能按下并拖动。 */
     panel.style.transition = 'none';
-    PD.push('面板标题存在=' + !!h + '（拖动把手）');
 
     function pevOn(node, type, x, y) {
       node.dispatchEvent(new PointerEvent(type, {
@@ -894,46 +892,82 @@ if (new URLSearchParams(location.search).get('probe') === 'paneldrag') {
         pointerId: 21, isPrimary: true, button: 0, buttons: 1
       }));
     }
+    function pos() {
+      var r = panel.getBoundingClientRect();
+      return { l: Math.round(r.left), t: Math.round(r.top) };
+    }
+    /* 从某个元素上按住拖 (dx,dy)，返回面板位移 */
+    function dragFrom(node, dx, dy, id) {
+      var p0 = pos();
+      var r = node.getBoundingClientRect();
+      var sx = Math.round(r.left + Math.min(6, r.width / 2));
+      var sy = Math.round(r.top + Math.min(6, r.height / 2));
+      node.dispatchEvent(new PointerEvent('pointerdown', {
+        bubbles: true, cancelable: true, clientX: sx, clientY: sy,
+        pointerId: id, isPrimary: true, button: 0, buttons: 1
+      }));
+      panel.dispatchEvent(new PointerEvent('pointermove', {
+        bubbles: true, cancelable: true, clientX: sx + dx, clientY: sy + dy,
+        pointerId: id, isPrimary: true, button: 0, buttons: 1
+      }));
+      panel.dispatchEvent(new PointerEvent('pointerup', {
+        bubbles: true, cancelable: true, clientX: sx + dx, clientY: sy + dy,
+        pointerId: id, isPrimary: true, button: 0, buttons: 1
+      }));
+      var p1 = pos();
+      return { dx: p1.l - p0.l, dy: p1.t - p0.t, p0: p0 };
+    }
 
-    var r0 = panel.getBoundingClientRect();
-    PD.push('打开时位置=' + [Math.round(r0.left), Math.round(r0.top)].join(','));
+    var r0 = pos();
+    PD.push('打开时位置=' + r0.l + ',' + r0.t);
 
-    /* 按住标题栏往右下拖 120,80 */
-    var sx = Math.round(r0.left + 40), sy = Math.round(r0.top + 12);
-    pevOn(h, 'pointerdown', sx, sy);
-    pevOn(panel, 'pointermove', sx + 120, sy + 80);
-    pevOn(panel, 'pointerup', sx + 120, sy + 80);
+    /* ① 状态区（不是控件）→ 应该能拖 */
+    var stat = panel.querySelector('.rp-stat-top');
+    var a = dragFrom(stat, 120, 80, 21);
+    PD.push('①拖状态区 位移=' + a.dx + ',' + a.dy + '（期望 120,80）');
+    var statOk = Math.abs(a.dx - 120) <= 2 && Math.abs(a.dy - 80) <= 2;
 
-    var r1 = panel.getBoundingClientRect();
-    var dx = Math.round(r1.left - r0.left), dy = Math.round(r1.top - r0.top);
-    PD.push('拖后位移=' + dx + ',' + dy + '（期望 ≈120,80）');
-    var moved = Math.abs(dx - 120) <= 2 && Math.abs(dy - 80) <= 2;
+    /* ②③④ 控件上按下 → 面板**不该**动（否则滑块/开关/折叠标题就没法用了） */
+    var ctrlOk = true;
+    var ctrls = [
+      ['滑块', panel.querySelector('input[type=range]')],
+      ['开关', panel.querySelector('.rp-sw')],
+      ['折叠标题', panel.querySelector('.rp-group-hd')]
+    ];
+    ctrls.forEach(function (c, i) {
+      if (!c[1]) { PD.push('  找不到' + c[0] + '!'); ctrlOk = false; return; }
+      var b = dragFrom(c[1], 90, 60, 31 + i);
+      var still = b.dx === 0 && b.dy === 0;
+      if (!still) ctrlOk = false;
+      PD.push('  拖' + c[0] + ' 面板位移=' + b.dx + ',' + b.dy + '（期望 0,0）');
+    });
 
     /* 位置有没有被记住 */
+    var r1 = pos();
     var cx = P.config.panelX, cy = P.config.panelY;
-    PD.push('记住的坐标=' + cx + ',' + cy + '（期望 ≈' +
-      Math.round(r1.left) + ',' + Math.round(r1.top) + '）');
-    var remembered = Math.abs(cx - r1.left) <= 2 && Math.abs(cy - r1.top) <= 2;
+    var remembered = Math.abs(cx - r1.l) <= 2 && Math.abs(cy - r1.t) <= 2;
+    PD.push('记住的坐标=' + cx + ',' + cy + '（期望 ≈' + r1.l + ',' + r1.t + '）');
 
     /* 关掉再打开：位置不该被自动跟位覆盖 */
     P.closePanel();
     P.openPanel();
-    var r2 = panel.getBoundingClientRect();
-    PD.push('关掉重开后=' + [Math.round(r2.left), Math.round(r2.top)].join(',') +
-      '（期望和拖后一致）');
-    var kept = Math.abs(r2.left - r1.left) <= 2 && Math.abs(r2.top - r1.top) <= 2;
+    var r2 = pos();
+    var kept = Math.abs(r2.l - r1.l) <= 2 && Math.abs(r2.t - r1.t) <= 2;
+    PD.push('关掉重开后=' + r2.l + ',' + r2.t + '（期望和拖后一致）');
 
-    /* 双击标题栏 → 清掉记录，回到自动跟位 */
-    h.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
-    var r3 = panel.getBoundingClientRect();
+    /* 在**非控件位置**双击 → 清掉记录，回到自动跟位 */
+    var stat2 = panel.querySelector('.rp-stat-top');
+    stat2.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+    var r3 = pos();
     var cleared = P.config.panelX === null && P.config.panelY === null;
-    var backAuto = Math.abs(r3.left - r1.left) > 2 || Math.abs(r3.top - r1.top) > 2;
+    var backAuto = Math.abs(r3.l - r1.l) > 2 || Math.abs(r3.t - r1.t) > 2;
     PD.push('双击后 记录已清=' + cleared + ' 位置已变=' + backAuto +
-      '（现在=' + [Math.round(r3.left), Math.round(r3.top)].join(',') + '）');
+      '（现在=' + r3.l + ',' + r3.t + '）');
 
-    var pass = !!h && moved && remembered && kept && cleared && backAuto;
+    var pass = statOk && ctrlOk && remembered && kept && cleared && backAuto;
     PD.push('结论: ' + (pass ? 'PASS' : 'FAIL ' + JSON.stringify({
-      能拖: moved, 记住位置: remembered, 重开保持: kept, 双击清记录: cleared, 回到自动位: backAuto
+      任意位置能拖: statOk, 控件上不拖: ctrlOk, 记住位置: remembered,
+      重开保持: kept, 双击清记录: cleared, 回到自动位: backAuto
     })));
     document.title = 'PANELDRAGPROBE|' + PD.join(' | ');
   }, 600);

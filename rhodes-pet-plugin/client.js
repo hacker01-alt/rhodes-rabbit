@@ -766,14 +766,18 @@ window.__ModuleLoader__.load({
         '.rp-panel.on{opacity:1;transform:none;visibility:visible}',
         '.rp-panel h4{font-size:12px;font-weight:400;letter-spacing:.26em;color:#9fd8ff;',
         '  margin-bottom:12px;text-transform:uppercase;',
-        /* 标题栏就是拖动把手：cursor 提示可拖，加个"抓握"手势更直观。
-           两侧留出负边距、补上内边距，让可点区域更宽（但视觉上不变）。 */
-        '  cursor:grab;user-select:none;touch-action:none;',
         '  margin-left:-6px;margin-right:-6px;padding:2px 6px;border-radius:6px;',
         '  transition:background .16s ease}',
+        /* **整块面板**都能拖：给 grab 光标；控件再把光标覆盖回自己的，
+           这样"能拖的地方"和"能点的地方"一眼能分出来。
+           标题栏另外留个悬停高亮 —— 它是视觉上的把手，给个可拖的暗示。 */
+        '.rp-panel{cursor:grab;touch-action:none}',
+        '.rp-panel input{cursor:auto}',
+        '.rp-panel button,.rp-panel .rp-sw,.rp-panel .rp-group-hd{cursor:pointer}',
         '.rp-panel h4:hover{background:rgba(120,190,255,.10)}',
-        /* 拖动中：光标变抓握、整体轻微提起来一点 */
-        '.rp-panel.rp-paneling h4{cursor:grabbing;background:rgba(120,190,255,.14)}',
+        /* 拖动中：所有地方都变抓握、标题栏高亮、整体提起来一点 */
+        '.rp-panel.rp-paneling,.rp-panel.rp-paneling *{cursor:grabbing}',
+        '.rp-panel.rp-paneling h4{background:rgba(120,190,255,.14)}',
         '.rp-panel.rp-paneling{box-shadow:0 18px 46px rgba(0,0,0,.62)}',
         '.rp-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 0 0}',
         '.rp-row label{color:rgba(255,255,255,.86);flex:none}',
@@ -1702,15 +1706,25 @@ window.__ModuleLoader__.load({
       gear.addEventListener('pointerdown', function (ev) { ev.stopPropagation(); });
       gear.addEventListener('click', function (ev) { ev.stopPropagation(); togglePanel(); });
       /* ======================= 拖动设置面板 =======================
-         把手是标题栏（<h4>兔兔设置</h4>）—— 刻意**不**拿整个面板当把手：
-         那样在滑块、开关上按下也会被当成拖动，那些控件就没法用了。
-         拖完把坐标记进 cfg.panelX/panelY（进 localStorage），下次打开还在那儿。
-         想让它回到"自动跟在兔兔旁边"：**双击标题栏**。 */
+         **面板上任意位置都能拖**（不只有标题栏）—— 面板挺长的，鼠标在下面时要移回顶部才能拖，
+         很别扭。拖完把坐标记进 cfg.panelX/panelY（进 localStorage），下次打开还在那儿。
+         想让它回到"自动跟在兔兔旁边"：**在面板上双击**（控件上双击不算）。 */
       var panelDrag = null;
-      function panelHead() { return panel.querySelector('h4'); }
-      function onPanelHead(ev) {
-        var h = panelHead();
-        return !!h && (ev.target === h || h.contains(ev.target));
+      /* 这些地方按下/双击要留给控件自己，不算拖动把手：
+           · input          —— 滑块
+           · button         —— 按钮
+           · .rp-sw         —— 开关。注意它是 <div> 不是 <button>！漏了它开关就点不动了。
+           · .rp-group-hd   —— 折叠组标题，点击要展开/收起
+           · 滚动条         —— 在那儿按下是要滚内容，不能被当成拖面板
+         其余地方（状态区、说明文字、分组内的空白）都算把手。 */
+      function onPanelControl(ev) {
+        var t = ev.target;
+        if (!t || t.nodeType !== 1) return true;
+        if (t.closest && t.closest('input,button,.rp-sw,.rp-group-hd')) return true;
+        var sc = t.closest && t.closest('.rp-panel-scroll');
+        /* 点在滚动条上：target 就是滚动容器本身，且 offsetX 超过了内容宽度 */
+        if (sc && t === sc && ev.offsetX > sc.clientWidth) return true;
+        return false;
       }
       function panelDragStart(ev) {
         if (ev.button !== 0) return;                       // 只接左键
@@ -1741,13 +1755,13 @@ window.__ModuleLoader__.load({
       panel.addEventListener('pointerdown', function (ev) {
         /* 面板内部的点击不该冒泡出去（否则会被 onDocDown 当成"点了外面"而关掉面板） */
         ev.stopPropagation();
-        if (onPanelHead(ev)) panelDragStart(ev);
+        if (!onPanelControl(ev)) panelDragStart(ev);
       });
       panel.addEventListener('pointermove', panelDragMove);
       panel.addEventListener('pointerup', panelDragEnd);
       panel.addEventListener('pointercancel', panelDragEnd);
       panel.addEventListener('dblclick', function (ev) {
-        if (!onPanelHead(ev)) return;
+        if (onPanelControl(ev)) return;                     // 在控件上双击不算（比如开关会被点两下）
         ev.preventDefault();
         ev.stopPropagation();
         cfg.panelX = null; cfg.panelY = null;
