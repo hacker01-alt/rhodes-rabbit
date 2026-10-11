@@ -74,7 +74,13 @@ window.__ModuleLoader__.load({
         xp: 0,              // 等级经验：每吃一根 +1（一口几顿是随机手感，所以按"根"记，不看顿数）
         affection: 0,       // 好感 0~100：摸它 / 跟它说话会涨，喂食也给一点
         x: null,            // 位置(NaN=用默认右下角)
-        y: null
+        y: null,
+        /* 设置面板的位置。null = 自动摆在兔兔旁边（默认行为）；
+           用户拖过面板之后就记下坐标，下次打开还放在他放的地方 ——
+           "把它挪到这儿"本身就是个意图，不该每次都被自动摆位覆盖掉。
+           双击标题栏可以清空这两项、回到自动跟位。 */
+        panelX: null,
+        panelY: null
       };
       /* ======================= 存档键 =======================
          本插件用到的所有 localStorage 键集中在这里，好处有两个：
@@ -759,7 +765,16 @@ window.__ModuleLoader__.load({
         '  transition:opacity .18s ease,transform .18s ease;visibility:hidden}',
         '.rp-panel.on{opacity:1;transform:none;visibility:visible}',
         '.rp-panel h4{font-size:12px;font-weight:400;letter-spacing:.26em;color:#9fd8ff;',
-        '  margin-bottom:12px;text-transform:uppercase}',
+        '  margin-bottom:12px;text-transform:uppercase;',
+        /* 标题栏就是拖动把手：cursor 提示可拖，加个"抓握"手势更直观。
+           两侧留出负边距、补上内边距，让可点区域更宽（但视觉上不变）。 */
+        '  cursor:grab;user-select:none;touch-action:none;',
+        '  margin-left:-6px;margin-right:-6px;padding:2px 6px;border-radius:6px;',
+        '  transition:background .16s ease}',
+        '.rp-panel h4:hover{background:rgba(120,190,255,.10)}',
+        /* 拖动中：光标变抓握、整体轻微提起来一点 */
+        '.rp-panel.rp-paneling h4{cursor:grabbing;background:rgba(120,190,255,.14)}',
+        '.rp-panel.rp-paneling{box-shadow:0 18px 46px rgba(0,0,0,.62)}',
         '.rp-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 0 0}',
         '.rp-row label{color:rgba(255,255,255,.86);flex:none}',
         /* 每个设置项下面那句说明：比标签小一档、颜色更浅，形成"标题 / 细节"的层次。
@@ -1639,10 +1654,25 @@ window.__ModuleLoader__.load({
       /* 把面板摆到兔兔旁边，并**夹回可视区内**（兔兔常待在右下角；面板是 position:fixed，
          所以用视口坐标）。展开/收起分组之后面板会变高，也必须重新摆一次 ——
          否则位置还是按旧高度算的，展开后下半截会跑到屏幕外（踩过）。 */
+      /* 面板至少露出这么多（拖动时用），否则会被拖到屏幕外找不回来。
+         横向留 88px 够看到标题、纵向留 42px 就是标题栏那一行。 */
+      var PANEL_KEEP_X = 88;
+      var PANEL_KEEP_Y = 42;
+
       function placePanel() {
         var pw = panel.offsetWidth || 296;
         var ph = panel.offsetHeight || 330;
         var vw = window.innerWidth, vh = window.innerHeight;
+        /* 用户拖过 → 尊重他放的位置，只夹回"还看得见"的范围。
+           这里刻意**不**再自动摆到兔兔旁边：那会把用户手动放的位置覆盖掉，
+           拖了等于白拖（面板打开/切分组/resize 都会走这个函数）。
+           想回到自动跟位：双击标题栏。 */
+        if (typeof cfg.panelX === 'number' && typeof cfg.panelY === 'number') {
+          panel.style.left = clamp(cfg.panelX, PANEL_KEEP_X - pw, vw - PANEL_KEEP_X) + 'px';
+          panel.style.top = clamp(cfg.panelY, 0, Math.max(0, vh - PANEL_KEEP_Y)) + 'px';
+          panel.style.transformOrigin = '50% 50%';
+          return;
+        }
         var left = clamp(S.x + S.W - pw, 8, Math.max(8, vw - pw - 8));
         var top = S.y - ph - 12;
         if (top < 8) top = S.y + S.H + 12;                 // 上方不够就翻到下面
@@ -1671,7 +1701,60 @@ window.__ModuleLoader__.load({
       }
       gear.addEventListener('pointerdown', function (ev) { ev.stopPropagation(); });
       gear.addEventListener('click', function (ev) { ev.stopPropagation(); togglePanel(); });
-      panel.addEventListener('pointerdown', function (ev) { ev.stopPropagation(); });
+      /* ======================= 拖动设置面板 =======================
+         把手是标题栏（<h4>兔兔设置</h4>）—— 刻意**不**拿整个面板当把手：
+         那样在滑块、开关上按下也会被当成拖动，那些控件就没法用了。
+         拖完把坐标记进 cfg.panelX/panelY（进 localStorage），下次打开还在那儿。
+         想让它回到"自动跟在兔兔旁边"：**双击标题栏**。 */
+      var panelDrag = null;
+      function panelHead() { return panel.querySelector('h4'); }
+      function onPanelHead(ev) {
+        var h = panelHead();
+        return !!h && (ev.target === h || h.contains(ev.target));
+      }
+      function panelDragStart(ev) {
+        if (ev.button !== 0) return;                       // 只接左键
+        var r = panel.getBoundingClientRect();
+        panelDrag = { id: ev.pointerId, dx: ev.clientX - r.left, dy: ev.clientY - r.top };
+        panel.classList.add('rp-paneling');
+        /* 和兔兔/把手一样：捕获失败不该影响拖动本身 */
+        try { if (panel.setPointerCapture) panel.setPointerCapture(ev.pointerId); } catch (e) { /* noop */ }
+        ev.preventDefault();
+      }
+      function panelDragMove(ev) {
+        if (!panelDrag || ev.pointerId !== panelDrag.id) return;
+        var pw = panel.offsetWidth;
+        var vw = window.innerWidth, vh = window.innerHeight;
+        panel.style.left = clamp(ev.clientX - panelDrag.dx, PANEL_KEEP_X - pw, vw - PANEL_KEEP_X) + 'px';
+        panel.style.top = clamp(ev.clientY - panelDrag.dy, 0, Math.max(0, vh - PANEL_KEEP_Y)) + 'px';
+      }
+      function panelDragEnd(ev) {
+        if (!panelDrag || (ev && ev.pointerId !== panelDrag.id)) return;
+        panelDrag = null;
+        panel.classList.remove('rp-paneling');
+        /* 存实际渲染出来的位置（不读 style.left：它可能是空串或被夹过之前的值） */
+        var r = panel.getBoundingClientRect();
+        cfg.panelX = Math.round(r.left);
+        cfg.panelY = Math.round(r.top);
+        save();
+      }
+      panel.addEventListener('pointerdown', function (ev) {
+        /* 面板内部的点击不该冒泡出去（否则会被 onDocDown 当成"点了外面"而关掉面板） */
+        ev.stopPropagation();
+        if (onPanelHead(ev)) panelDragStart(ev);
+      });
+      panel.addEventListener('pointermove', panelDragMove);
+      panel.addEventListener('pointerup', panelDragEnd);
+      panel.addEventListener('pointercancel', panelDragEnd);
+      panel.addEventListener('dblclick', function (ev) {
+        if (!onPanelHead(ev)) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        cfg.panelX = null; cfg.panelY = null;
+        save();
+        placePanel();                                       // 立刻跳回兔兔旁边
+        floatWord('跟回兔兔了', 'c-mood');
+      });
       document.addEventListener('pointerdown', onDocDown, true);   // 捕获阶段，见 onDocDown 的说明
 
       /* ======================= 自动喂食 ======================= */

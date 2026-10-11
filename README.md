@@ -205,6 +205,7 @@ cd rhodes-boot-plugin && pnpm pack    # → dsh-rhodes-boot-<版本>.tgz
 | `?probe=sound` | 抓取/放下音效是否真的响、响的是不是对的那个、单击不误响 |
 | `?probe=face` | 拖胡萝卜时嘴角流口水、松手收起、吃完脸颊冒腮红 |
 | `?probe=nodebug` | **插件模式（debug:false）下不能改动用户存档**（防"重启后已吃归零"复发） |
+| `?probe=paneldrag` | 设置面板能否拖动、位置是否记住、双击标题能否回到自动跟位 |
 | `?probe=1` | 面板里的动态数字（"已吃 N 根"）是否实时更新 |
 
 > 注意 `levels`（经验曲线的数字）和 `level`（等级/好感的机制表现）是两个不同的探针。

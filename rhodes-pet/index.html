@@ -873,6 +873,72 @@ if (new URLSearchParams(location.search).get('probe') === 'nodebug') {
   }, 400);
 }
 
+/* ?probe=paneldrag —— 验证设置面板能拖动、位置会被记住、双击标题能回到自动跟位 */
+if (new URLSearchParams(location.search).get('probe') === 'paneldrag') {
+  var PD = [];
+  setTimeout(function () {
+    var P = window.RHODES_PET;
+    /* 面板是懒构建的：必须**先打开**才会生成 DOM，然后才能查到元素 */
+    P.openPanel();
+    var panel = document.querySelector('.rp-panel');
+    var h = panel.querySelector('h4');
+    /* 面板打开时有一段 transform 过渡（.18s），过渡没走完时 getBoundingClientRect
+       读到的是中间态，位移会算歪（实测差 6px/17px）。这里先把它掐掉再量。
+       注意这只影响测量 —— 真实使用中那 0.18s 里没人能按下并拖动。 */
+    panel.style.transition = 'none';
+    PD.push('面板标题存在=' + !!h + '（拖动把手）');
+
+    function pevOn(node, type, x, y) {
+      node.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, cancelable: true, clientX: x, clientY: y,
+        pointerId: 21, isPrimary: true, button: 0, buttons: 1
+      }));
+    }
+
+    var r0 = panel.getBoundingClientRect();
+    PD.push('打开时位置=' + [Math.round(r0.left), Math.round(r0.top)].join(','));
+
+    /* 按住标题栏往右下拖 120,80 */
+    var sx = Math.round(r0.left + 40), sy = Math.round(r0.top + 12);
+    pevOn(h, 'pointerdown', sx, sy);
+    pevOn(panel, 'pointermove', sx + 120, sy + 80);
+    pevOn(panel, 'pointerup', sx + 120, sy + 80);
+
+    var r1 = panel.getBoundingClientRect();
+    var dx = Math.round(r1.left - r0.left), dy = Math.round(r1.top - r0.top);
+    PD.push('拖后位移=' + dx + ',' + dy + '（期望 ≈120,80）');
+    var moved = Math.abs(dx - 120) <= 2 && Math.abs(dy - 80) <= 2;
+
+    /* 位置有没有被记住 */
+    var cx = P.config.panelX, cy = P.config.panelY;
+    PD.push('记住的坐标=' + cx + ',' + cy + '（期望 ≈' +
+      Math.round(r1.left) + ',' + Math.round(r1.top) + '）');
+    var remembered = Math.abs(cx - r1.left) <= 2 && Math.abs(cy - r1.top) <= 2;
+
+    /* 关掉再打开：位置不该被自动跟位覆盖 */
+    P.closePanel();
+    P.openPanel();
+    var r2 = panel.getBoundingClientRect();
+    PD.push('关掉重开后=' + [Math.round(r2.left), Math.round(r2.top)].join(',') +
+      '（期望和拖后一致）');
+    var kept = Math.abs(r2.left - r1.left) <= 2 && Math.abs(r2.top - r1.top) <= 2;
+
+    /* 双击标题栏 → 清掉记录，回到自动跟位 */
+    h.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+    var r3 = panel.getBoundingClientRect();
+    var cleared = P.config.panelX === null && P.config.panelY === null;
+    var backAuto = Math.abs(r3.left - r1.left) > 2 || Math.abs(r3.top - r1.top) > 2;
+    PD.push('双击后 记录已清=' + cleared + ' 位置已变=' + backAuto +
+      '（现在=' + [Math.round(r3.left), Math.round(r3.top)].join(',') + '）');
+
+    var pass = !!h && moved && remembered && kept && cleared && backAuto;
+    PD.push('结论: ' + (pass ? 'PASS' : 'FAIL ' + JSON.stringify({
+      能拖: moved, 记住位置: remembered, 重开保持: kept, 双击清记录: cleared, 回到自动位: backAuto
+    })));
+    document.title = 'PANELDRAGPROBE|' + PD.join(' | ');
+  }, 600);
+}
+
 /* ?probe=level —— 验证等级/好感机制：连喂直到升级，看数值、进度条、台词池 */
 if (new URLSearchParams(location.search).get('probe') === 'level') {
   var K = [];
