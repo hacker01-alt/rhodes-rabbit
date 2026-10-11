@@ -275,7 +275,9 @@ window.__ModuleLoader__.load({
         /* 截图/自检用：强制摆出"流口水"和"腮红"两个状态
            （正常靠拖胡萝卜 / 吃完触发，headless 里不好制造） */
         blush: USE_QUERY && Q.blush === '1',
-        drool: USE_QUERY && Q.drool === '1'
+        drool: USE_QUERY && Q.drool === '1',
+        /* 截图用：把兔兔摆到指定的 x（比如 ?x=60 看它在左半边镜像后的样子） */
+        x: USE_QUERY && Q.x != null ? Number(Q.x) : null
       };
       if (DEBUG.img) PET_IMG = DEBUG.img;
       /* 调试用：把等级/好感/累计根数摆到某个值（写在收敛之后，不然会被上面那几行清掉）。
@@ -966,11 +968,12 @@ window.__ModuleLoader__.load({
         pet.style.width = w + 'px';
         pet.style.height = h + 'px';
         /* 默认位置要**预留把手的宽度**，否则兔兔贴在右下角时把手会被视口裁掉。
-           （offerSpot 里还有一次"右边放不下就翻到左侧"的兜底。） */
-        if (S.x == null) {
-          S.x = window.innerWidth - w - OFFER_SIZE - 24;
-          S.y = window.innerHeight - h - 20;
-        }
+           （offerSpot 里还有一次"右边放不下就翻到左侧"的兜底。）
+           x 和 y **分开判断** —— 早先 y 的默认值被绑在 `if (S.x == null)` 里，
+           于是"只设了 x、没设 y"时（例如调试参数 ?x=180）y 还是 null，
+           下一行 clamp(null, 4, …) 直接把它变成 4：兔兔跑到屏幕最顶端去了。 */
+        if (S.x == null) S.x = window.innerWidth - w - OFFER_SIZE - 24;
+        if (S.y == null) S.y = window.innerHeight - h - 20;
         S.x = clamp(S.x, 4, Math.max(4, window.innerWidth - w - 4));
         S.y = clamp(S.y, 4, Math.max(4, window.innerHeight - h - 4));
         layer.style.opacity = cfg.opacity;
@@ -999,8 +1002,32 @@ window.__ModuleLoader__.load({
         return { x: localX, y: S.H * 0.55 - OFFER_SIZE / 2 };
       }
 
+      /* ======================= 朝向：跑到左半边就镜像 =======================
+         素材本身是**朝左**的（鼻子约在 44%、眼睛在 51%，鼻子在眼睛左边）。
+         让它永远朝一个方向会很尬，所以放到屏幕左半边时整体水平镜像，总是面向屏幕中间。
+         翻转加在 .rp-inner 上、**不是** .rp-img：腮红 / 口水 / 胡萝卜都挂在 inner 里，
+         一起镜像后它们相对脸的位置才对得上（只翻图片的话，脸镜像了、腮红却留在原地）。
+         .rp-inner 的 transform-origin 是 50%，所以镜像是绕自身中心，不会产生位移。 */
+      var FLIP = 'scaleX(-1) ';
+      /* 所有对 inner 的 transform 写入都走它 —— 免得哪一处漏掉翻转 */
+      function setInner(rest) {
+        inner.style.transform = (S.faceLeft ? FLIP : '') + rest;
+      }
+      /* 跨过中线才翻，并且留 24px 迟滞：否则兔兔停在正中间时会来回翻个不停。 */
+      function updateFacing() {
+        var mid = window.innerWidth / 2;
+        var cx = S.x + S.W / 2;
+        var want = S.faceLeft ? (cx < mid + 24) : (cx < mid - 24);
+        if (want !== !!S.faceLeft) {
+          S.faceLeft = want;
+          /* 立刻应用一次，别等下一帧 —— DEBUG.freeze（停循环）时 loop 根本不跑 */
+          setInner('translateY(0) scale(1,1)');
+        }
+      }
+
       function place() {
         pet.style.transform = 'translate3d(' + S.x.toFixed(1) + 'px,' + S.y.toFixed(1) + 'px,0) scale(' + DEBUG.scale + ')';
+        updateFacing();
         /* 把手是兔兔的子元素，兔兔移动时它自动跟随 —— 这里只需要在"翻边判定可能变了"时
            更新一次落点（窗口尺寸、兔兔位置变化都会影响右侧还有没有空间）。
            拖动中不抢位置：那时候把手跟着光标走。 */
@@ -1125,11 +1152,11 @@ window.__ModuleLoader__.load({
       }
       function hop() {
         inner.style.transition = 'transform .34s cubic-bezier(.34,1.3,.5,1)';
-        inner.style.transform = 'translateY(-18px) scale(1.04,.96)';
+        setInner('translateY(-18px) scale(1.04,.96)');
         setTimeout(function () {
           inner.style.transition = 'transform .3s cubic-bezier(.5,0,.6,1)';
-          inner.style.transform = 'translateY(0) scale(.98,1.03)';
-          setTimeout(function () { inner.style.transform = 'translateY(0) scale(1,1)'; }, 200);
+          setInner('translateY(0) scale(.98,1.03)');
+          setTimeout(function () { setInner('translateY(0) scale(1,1)'); }, 200);
         }, 170);
       }
       function chomp() {
@@ -1889,7 +1916,7 @@ window.__ModuleLoader__.load({
         var bob = Math.sin(S.t * 1.55 + 0.6) * 1.3;
         var baseT = 'translateY(' + bob.toFixed(2) + 'px) scale(' + (1 + breathe).toFixed(4) + ',' + (1 - breathe).toFixed(4) + ')';
         /* grounded 为假时说明落地动画还在跑，外层 transform 归它管，别去覆盖 */
-        if (S.grounded !== false && !inner.dataset.busy) inner.style.transform = baseT;
+        if (S.grounded !== false && !inner.dataset.busy) setInner(baseT);
 
         wanderTick(dt);
 
@@ -2042,6 +2069,7 @@ window.__ModuleLoader__.load({
       layout();
       S.x = (typeof cfg.x === 'number' && !isNaN(cfg.x)) ? cfg.x : null;
       S.y = (typeof cfg.y === 'number' && !isNaN(cfg.y)) ? cfg.y : null;
+      if (DEBUG.x != null && isFinite(DEBUG.x)) S.x = DEBUG.x;    // 截图用（见 DEBUG.x 的说明）
       layout();
       place();
       positionOffer();        // 把"拖拽喂食"的胡萝卜把手摆到兔兔旁边（起手时也要定位一次）

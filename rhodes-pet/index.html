@@ -973,6 +973,64 @@ if (new URLSearchParams(location.search).get('probe') === 'paneldrag') {
   }, 600);
 }
 
+/* ?probe=facing —— 验证朝向：拖到左半边镜像（朝右）、回到右半边还原（朝左）
+   另外确认腮红/口水/胡萝卜都挂在 .rp-inner 里 —— 翻转加在 inner 上，
+   它们才会跟着一起镜像（只翻图片的话，脸翻了腮红却留在原地）。 */
+if (new URLSearchParams(location.search).get('probe') === 'facing') {
+  var FA = [];
+  setTimeout(function () {
+    var pet = document.querySelector('.rp-pet');
+    var inner = document.querySelector('.rp-inner');
+    function mirrored() {
+      return /scaleX\(-1\)|matrix\(-1/.test(inner.style.transform || '');
+    }
+    function pev(type, x, y) {
+      pet.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, cancelable: true, clientX: x, clientY: y,
+        pointerId: 41, isPrimary: true, button: 0, buttons: 1
+      }));
+    }
+    /* 从当前位置按住拖到目标 x */
+    function dragTo(targetX) {
+      var r = pet.getBoundingClientRect();
+      var y = Math.round(r.top + 30);
+      pev('pointerdown', Math.round(r.left + 30), y);
+      pev('pointermove', targetX, y);
+      pev('pointerup', targetX, y);
+      var r2 = pet.getBoundingClientRect();
+      return Math.round(r2.left);
+    }
+
+    var vw = window.innerWidth, mid = Math.round(vw / 2);
+    FA.push('屏幕中线 x=' + mid);
+    FA.push('初始（右下角）镜像=' + mirrored() + '（期望 false：素材默认朝左）');
+    var initOk = !mirrored();
+
+    var inInner = ['.rp-blush', '.rp-drool', '#rpCarrot'].every(function (s) {
+      return !!inner.querySelector(s);
+    });
+    FA.push('腮红/口水/胡萝卜都在 inner 内=' + inInner + '（才会一起镜像）');
+
+    var lx = dragTo(60);
+    FA.push('拖到左侧 x=' + lx + ' 镜像=' + mirrored() + '（期望 true：朝右面向中间）');
+    var leftOk = mirrored();
+
+    var rx = dragTo(vw - 140);
+    FA.push('拖回右侧 x=' + rx + ' 镜像=' + mirrored() + '（期望 false：朝左面向中间）');
+    var rightOk = !mirrored();
+
+    /* 迟滞：停在正中偏一点点时不该来回翻 */
+    var cx = dragTo(mid - 10);
+    FA.push('停在中线左侧 10px x=' + cx + ' 镜像=' + mirrored() + '（迟滞内，沿用上一次状态）');
+
+    var pass = initOk && inInner && leftOk && rightOk;
+    FA.push('结论: ' + (pass ? 'PASS' : 'FAIL ' + JSON.stringify({
+      初始朝左: initOk, 部件都在inner: inInner, 左侧镜像: leftOk, 右侧还原: rightOk
+    })));
+    document.title = 'FACINGPROBE|' + FA.join(' | ');
+  }, 600);
+}
+
 /* ?probe=level —— 验证等级/好感机制：连喂直到升级，看数值、进度条、台词池 */
 if (new URLSearchParams(location.search).get('probe') === 'level') {
   var K = [];
