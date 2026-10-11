@@ -250,7 +250,11 @@ window.__ModuleLoader__.load({
         aff: USE_QUERY && Q.aff != null ? Number(Q.aff) : null,
         supply: USE_QUERY && Q.supply != null ? Number(Q.supply) : null,
         follow: USE_QUERY && Q.follow === '1',
-        land: USE_QUERY && Q.land != null ? Number(Q.land) : null
+        land: USE_QUERY && Q.land != null ? Number(Q.land) : null,
+        /* 截图/自检用：强制摆出"流口水"和"腮红"两个状态
+           （正常靠拖胡萝卜 / 吃完触发，headless 里不好制造） */
+        blush: USE_QUERY && Q.blush === '1',
+        drool: USE_QUERY && Q.drool === '1'
       };
       if (DEBUG.img) PET_IMG = DEBUG.img;
       /* 调试用：把等级/好感/累计根数摆到某个值（写在收敛之后，不然会被上面那几行清掉）。
@@ -591,6 +595,26 @@ window.__ModuleLoader__.load({
         '.rp-img{display:block;width:100%;height:auto;pointer-events:none;',
         '  filter:drop-shadow(0 10px 18px rgba(0,0,0,.55))}',
         '.rp-layer.rp-dim .rp-img{filter:drop-shadow(0 10px 18px rgba(0,0,0,.55)) brightness(1.06)}',
+
+        /* 腮红：吃完胡萝卜后在脸颊上泛一下。
+           位置从素材量出来：眼睛中心约 (51%,20%)、鼻子约 (44%,30%)。
+           宽 14% / 高 12%、左上角落在 (44%,21%) —— 中心 (51%,27%)，
+           正好压在眼睛正下方的脸颊肉上，左边不越到鼻子（44%）上去。
+           径向渐变 + 透明收边，看起来是"透出来的红"，不是贴了一块色块。 */
+        '.rp-blush{position:absolute;left:44%;top:21%;width:14%;height:12%;border-radius:50%;',
+        '  background:radial-gradient(closest-side,rgba(255,108,140,.62),',
+        '    rgba(255,108,140,.30) 62%,rgba(255,108,140,0));',
+        '  opacity:0;pointer-events:none;filter:blur(.5px);transition:opacity .3s ease}',
+        '.rp-pet.rp-blush-on .rp-blush{opacity:1}',
+        /* 口水：拖胡萝卜时从嘴角（约 45%,32%）往下挂一滴，轻微"滴一下"。
+           只用 transform 动（不改 top），这样不会触发重排。 */
+        '.rp-drool{position:absolute;left:42.5%;top:31%;width:5%;',
+        '  opacity:0;pointer-events:none;transform-origin:50% 0;transition:opacity .16s ease}',
+        '.rp-drool svg{display:block;width:100%;height:auto;',
+        '  filter:drop-shadow(0 1px 2px rgba(0,0,0,.28))}',
+        '.rp-pet.rp-drool-on .rp-drool{opacity:1;animation:rp-drip 1.1s ease-in-out infinite}',
+        '@keyframes rp-drip{0%,100%{transform:translateY(0) scaleY(1)}',
+        '  45%{transform:translateY(6%) scaleY(1.22)}80%{transform:translateY(2%) scaleY(1.06)}}',
         /* 脚下阴影，落地感 */
         '.rp-shadow{position:absolute;left:16%;right:16%;bottom:-8px;height:14px;border-radius:50%;',
         '  background:radial-gradient(ellipse at center,rgba(0,0,0,.6),rgba(0,0,0,0) 70%);pointer-events:none}',
@@ -833,6 +857,23 @@ window.__ModuleLoader__.load({
       img.src = PET_IMG;
       img.alt = '';
       img.draggable = false;
+      /* 腮红：吃完胡萝卜后在脸颊上泛一下。
+         位置是按素材量出来的（放大素材打 10% 网格读的坐标）：
+         眼睛中心约 (51%, 20%)、鼻子约 (44%, 30%)，
+         所以腮红压在**眼睛正下方的脸颊肉**上，别糊到鼻子上。 */
+      el('div', 'rp-blush', inner);
+      /* 口水：拖胡萝卜的时候从**嘴角**（约 45%, 32%）往下挂一滴。
+         用 SVG 画水滴形 + 一点高光，比 border-radius 拼出来的干净。 */
+      var drool = el('div', 'rp-drool', inner);
+      drool.innerHTML =
+        '<svg viewBox="0 0 18 28" aria-hidden="true">' +
+        '<defs><linearGradient id="rpDg" x1="0" y1="0" x2="0" y2="1">' +
+        '<stop offset="0" stop-color="#eafcff"/><stop offset="1" stop-color="#8ed2f0"/>' +
+        '</linearGradient></defs>' +
+        '<path d="M9 1 C9 9 17 12 17 18.5 A8 8 0 0 1 1 18.5 C1 12 9 9 9 1 Z" ' +
+        'fill="url(#rpDg)" stroke="rgba(255,255,255,.7)" stroke-width="1.1"/>' +
+        '<ellipse cx="6.1" cy="18.2" rx="2.1" ry="2.7" fill="rgba(255,255,255,.72)"/>' +
+        '</svg>';
       el('div', 'rp-shadow', inner);
       var carrot = el('div', 'rp-carrot', inner);
       carrot.id = 'rpCarrot';
@@ -990,6 +1031,8 @@ window.__ModuleLoader__.load({
         if (S.eat) return;                      // 正在啃就不接新的
         offerDrag = { id: ev.pointerId, x: offerPos.x, y: offerPos.y };
         carrotHandle.classList.add('rp-grab');
+        /* 一拖胡萝卜兔兔就馋了：嘴角挂一滴口水，直到松手 */
+        pet.classList.add('rp-drool-on');
         /* 和兔兔拖动一样：捕获失败不该影响拖动本身 */
         try { if (carrotHandle.setPointerCapture) carrotHandle.setPointerCapture(ev.pointerId); } catch (e) { /* noop */ }
         Sfx.resume();
@@ -1009,6 +1052,7 @@ window.__ModuleLoader__.load({
         if (!offerDrag || (ev && ev.pointerId !== offerDrag.id)) return;
         offerDrag = null;
         pet.classList.remove('rp-mouth');
+        pet.classList.remove('rp-drool-on');    // 不馋了
         carrotHandle.classList.remove('rp-grab');
         var x = ev ? ev.clientX : 0, y = ev ? ev.clientY : 0;
         if (ev && hitPet(x, y) && feed()) {
@@ -1190,6 +1234,12 @@ window.__ModuleLoader__.load({
           carrotLeaves.style.transform = 'translateX(26px) scale(.4)';
           S.eat = null;
           Sfx.happy();
+          /* 腮红：吃完在脸颊上泛一下，2.6 秒后淡出。
+             和 happy() 同时起 —— 声音和脸红是同一件事的两面。
+             用 clearTimeout 兜一下，连续喂两根时不会被前一个定时器提前收掉。 */
+          pet.classList.add('rp-blush-on');
+          clearTimeout(S.blushTimer);
+          S.blushTimer = setTimeout(function () { pet.classList.remove('rp-blush-on'); }, 2600);
           floatWord(pick(WORDS.finish), 'c-mood');
           crumbs(6, S.W * 0.55, S.H * 0.45);
           setTimeout(function () {
@@ -1935,6 +1985,9 @@ window.__ModuleLoader__.load({
 
       // 调试：把状态直接摆好
       if (DEBUG.panel) togglePanel(true);
+      /* 截图用：headless 里没法真的"拖胡萝卜"或"等它吃完"，直接把两个状态摆出来 */
+      if (DEBUG.blush) pet.classList.add('rp-blush-on');
+      if (DEBUG.drool) pet.classList.add('rp-drool-on');
       if (DEBUG.state === 'levelup') { setTimeout(function () { feed(); }, 80); }
       else if (DEBUG.state === 'eat') { feed(5); }
       else if (DEBUG.state === 'eat1') { feed(5); biteOnce(); }

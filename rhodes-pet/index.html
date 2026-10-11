@@ -768,6 +768,70 @@ if (new URLSearchParams(location.search).get('probe') === 'sound') {
   }, 700);
 }
 
+/* ?probe=face —— 验证"拖胡萝卜流口水 / 吃完冒腮红"的**触发时机**（视觉位置靠截图看）
+   腮红/口水都带 transition，读 computed 之前要先把过渡关掉，
+   否则读到的是过渡起始值，会误判成"没生效"（这个坑踩过好几次）。 */
+if (new URLSearchParams(location.search).get('probe') === 'face') {
+  var FP = [];
+  setTimeout(function () {
+    var P = window.RHODES_PET;
+    var pet = document.querySelector('.rp-pet');
+    var offer = document.querySelector('.rp-offer');
+    var blush = document.querySelector('.rp-blush');
+    var drool = document.querySelector('.rp-drool');
+    FP.push('元素存在: 腮红=' + !!blush + ' 口水=' + !!drool);
+
+    blush.style.transition = 'none';
+    drool.style.transition = 'none';
+    var initBlush = getComputedStyle(blush).opacity;
+    var initDrool = getComputedStyle(drool).opacity;
+    FP.push('初始 opacity: 腮红=' + initBlush + ' 口水=' + initDrool + '（都应为 0）');
+    var initOk = initBlush === '0' && initDrool === '0';
+
+    function faceEv(type, x, y, node) {
+      node.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, cancelable: true, clientX: x, clientY: y,
+        pointerId: 11, isPrimary: true, button: 0, buttons: 1
+      }));
+    }
+
+    /* ① 开始拖胡萝卜 → 嘴角挂口水 */
+    var r = offer.getBoundingClientRect();
+    faceEv('pointerdown', Math.round(r.left + 30), Math.round(r.top + 30), offer);
+    var droolOn = pet.classList.contains('rp-drool-on');
+    var droolOp = getComputedStyle(drool).opacity;
+    FP.push('拖动中 口水 class=' + droolOn + ' opacity=' + droolOp + '（期望 true / 1）');
+
+    /* ② 松手 → 口水收起 */
+    faceEv('pointerup', Math.round(r.left + 30), Math.round(r.top + 30), offer);
+    var droolOff = !pet.classList.contains('rp-drool-on');
+    FP.push('松手后 口水已收起=' + droolOff + '（期望 true）');
+
+    /* ③ 喂一根、等它啃完 → 脸颊冒腮红。
+       用 MutationObserver 抓 class 变化：腮红只亮 2.6 秒就淡出，
+       直接读最终状态可能已经错过了。 */
+    var seenBlush = false;
+    var mo = new MutationObserver(function () {
+      if (pet.classList.contains('rp-blush-on')) seenBlush = true;
+    });
+    mo.observe(pet, { attributes: true, attributeFilter: ['class'] });
+
+    P.feed();
+    setTimeout(function () {
+      FP.push('吃完后出现过腮红=' + seenBlush +
+        '（此刻 class=' + pet.classList.contains('rp-blush-on') + '）');
+      var pass = !!blush && !!drool && initOk && droolOn &&
+        droolOp === '1' && droolOff && seenBlush;
+      FP.push('结论: ' + (pass ? 'PASS' : 'FAIL ' + JSON.stringify({
+        元素: !!blush && !!drool, 初始都隐藏: initOk,
+        拖动出口水: droolOn, 口水可见: droolOp === '1',
+        松手收起: droolOff, 吃完冒腮红: seenBlush
+      })));
+      document.title = 'FACEPROBE|' + FP.join(' | ');
+    }, 2400);
+  }, 500);
+}
+
 /* ?probe=level —— 验证等级/好感机制：连喂直到升级，看数值、进度条、台词池 */
 if (new URLSearchParams(location.search).get('probe') === 'level') {
   var K = [];
