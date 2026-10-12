@@ -164,7 +164,14 @@ window.__ModuleLoader__.load({
 
     /* ======================= 样式（全部限定在 .rb-root 内） ======================= */
     const CSS = `
-.rb-root{position:fixed;inset:0;z-index:9;pointer-events:none;background:transparent}
+/* ⚠ 根节点必须是**黑的**，不能 transparent：
+   动画画布是固定的 1920x1080（.rb-stage），用 min(w/1920, h/1080) 等比缩放居中，
+   所以窗口比例不是 16:9 时上下（或左右）必然留出空白带。
+   早先这条是 background:transparent，黑幕（#rb-boot-cover）一撤，
+   留空的那两条带子就直接透出下面的 Harness 界面 ——
+   用户看到的是"窗口一缩小，启动动画就没盖满、底部露出状态栏"。
+   现在留空处由根节点自己刷黑（撤幕前后都是 #000，接得上）。 */
+.rb-root{position:fixed;inset:0;z-index:9;pointer-events:none;background:#000}
 .rb-root.rb-active{pointer-events:auto;cursor:crosshair}
 .rb-stage{position:absolute;left:50%;top:50%;width:1920px;height:1080px;
   transform:translate(-50%,-50%) scale(var(--rb-fit,1));transform-origin:center center;
@@ -385,7 +392,12 @@ window.__ModuleLoader__.load({
  40%{transform:translate(-50%,-50%) scale(var(--rb-fit,1)) translate(7px,-6px)}
  60%{transform:translate(-50%,-50%) scale(var(--rb-fit,1)) translate(-5px,3px)}
  80%{transform:translate(-50%,-50%) scale(var(--rb-fit,1)) translate(3px,-2px)}}
-.rb-root.rb-fadeout .rb-stage{opacity:0;transition:opacity .6s ease}
+/* 退场：淡的是**整个根节点**，不只是舞台。
+   只淡 .rb-stage 的话，根节点上那层黑底（留空的那两条带子）不会跟着淡 ——
+   动画淡完了、带子还是黑的，最后一下硬切才露出界面。
+   整层一起淡：动画和黑底同时化开，正好把界面交出来。
+   （淡出时长 .6s 和三处 CLOCK.later(660/700) 是配套的，别单独改。） */
+.rb-root.rb-fadeout{opacity:0;transition:opacity .6s ease}
 `;
 
     /* ======================= 标记 ======================= */

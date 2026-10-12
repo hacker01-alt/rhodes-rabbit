@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>把探针结果搬到页面上</title>
+<style>
+  html,body{margin:0;background:#0b0f12;color:#7CFC00;font:12px/1.5 monospace}
+  #t{white-space:pre-wrap;padding:6px}
+  iframe{position:fixed;left:0;bottom:0;width:1240px;height:820px;border:0;opacity:.18}
+</style>
+</head>
+<body>
+<div id="t">等探针…</div>
+<iframe id="f"></iframe>
+<script>
+/* 把 iframe 里 index.html?probe=X 写进 <title> 的结果搬到页面上 ——
+   这个环境的无头 Chromium **拿不到 stdout**（--dump-dom 一直是空的），
+   所以改成"把结果画到页面上再截图读字"。
+   用法：--screenshot 打开本页，等 virtual-time-budget 跑完，看左上角：
+     _verify_probe.html?probe=anger              （默认）
+     _verify_probe.html?probe=facing
+     _verify_probe.html?probe=follow&follow=1    （除 probe 外的参数会原样透传）
+   notrans 会关掉过渡/动画（无头下过渡不推进，关掉才好断言"看得见"这类事）；
+   它对 playDrop 那类 setTimeout 驱动的动画没有影响，不想关就加 &notrans=0。 */
+var q = new URLSearchParams(location.search);
+var probe = q.get('probe') || 'anger';
+var extra = q.get('notrans') === '0' ? '' : '&notrans=1';
+var pass = location.search.replace(/^\?/, '').replace(/(^|&)probe=[^&]*/g, '$1').replace(/^&+|&+$/g, '');
+document.getElementById('f').src = 'index.html?probe=' + probe +
+  (pass ? '&' + pass : '') + '&angerMs=0.12' + extra;
+setInterval(function () {
+  var d = document.getElementById('f').contentDocument;
+  document.getElementById('t').textContent =
+    (d.title || '(还没写)').split(' | ').join('\n');
+}, 300);
+</script>
+</body>
+</html>

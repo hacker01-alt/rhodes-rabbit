@@ -1,6 +1,6 @@
 {
   "name": "dsh-rhodes-pet",
-  "version": "1.31.0",
+  "version": "1.32.8",
   "private": true,
   "description": "DSH 的罗德岛兔兔桌宠：浮在界面上的兔兔，能拖、能摸、能喂胡萝卜、点它会说话，带设置面板、等级与好感",
   "keywords": [

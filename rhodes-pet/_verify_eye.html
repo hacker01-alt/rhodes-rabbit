@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>verify-eye</title>
+<style>
+  html,body{margin:0;height:100%;background:#101418}
+  #t{position:fixed;left:8px;top:8px;color:#7CFC00;font:13px/1.5 monospace;white-space:pre;z-index:9999}
+</style>
+</head>
+<body>
+<div id="t"></div>
+<!-- 一次性核对页：把"量出来的眼睛坐标"和"泪痕实际渲染位置"画成十字标出来。
+     红 = 素材上量出来的眼睛 (50%, 21%)；绿 = 泪珠中心（从 DOM 读真实位置）。
+     用法：--screenshot 打开
+       _verify_eye.html?mad=1&angerMs=30&scale=2.6&freeze=1&notrans=1
+     （notrans 关掉过渡/动画：无头下过渡不推进，关掉才能让眼泪按 CSS 规则直接显示） -->
+<script src="pet.js"></script>
+<script>
+setTimeout(function () {
+  var P = window.RHODES_PET, pet = document.querySelector('.rp-pet');
+  P.angerEnter();
+  setTimeout(function () {
+    var r = pet.getBoundingClientRect();
+    function mark(x, y, color, arm) {
+      [[-arm, 0, 2 * arm, 2], [0, -arm, 2, 2 * arm]].forEach(function (a) {
+        var d = document.createElement('div');
+        d.style.cssText = 'position:fixed;z-index:2147483647;background:' + color +
+          ';left:' + (x + a[0]) + 'px;top:' + (y + a[1]) + 'px;width:' + a[2] + 'px;height:' + a[3] + 'px';
+        document.body.appendChild(d);
+      });
+    }
+    var ex = r.left + r.width * 0.50, ey = r.top + r.height * 0.21;
+    mark(ex, ey, '#ff2d2d', 16);
+    var t = document.querySelector('.rp-tear').getBoundingClientRect();
+    var tx = t.left + t.width * 0.5, ty = t.top + t.height * (17 / 160);
+    mark(tx, ty, '#00ff88', 12);
+    var T = document.querySelector('.rp-tear');
+    document.getElementById('t').textContent =
+      'pet box x=' + Math.round(r.left) + ' y=' + Math.round(r.top) +
+      ' w=' + Math.round(r.width) + ' h=' + Math.round(r.height) +
+      '\neye(50%,21%) = ' + Math.round(ex) + ',' + Math.round(ey) +
+      '\ntear drop    = ' + Math.round(tx) + ',' + Math.round(ty) +
+      '\n泪痕条数 = ' + document.querySelectorAll('.rp-tear').length +
+      '\nclass = ' + pet.className +
+      '\nopacity = ' + getComputedStyle(T).opacity +
+      '\ntear rect pct = ' + ((t.left - r.left) / r.width * 100).toFixed(1) + '% , ' +
+        ((t.top - r.top) / r.height * 100).toFixed(1) + '%  w=' + (t.width / r.width * 100).toFixed(1) +
+        '% h=' + (t.height / r.height * 100).toFixed(1) + '%';
+  }, 300);
+}, 400);
+</script>
+</body>
+</html>

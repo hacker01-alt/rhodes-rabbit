@@ -45,11 +45,20 @@
       <button onclick="RHODES_PET.feed()">喂一根胡萝卜</button>
       <button onclick="RHODES_PET.talk()">让它说话</button>
       <button onclick="RHODES_PET.grantXp(5)">+5 经验（试升级）</button>
+      <button onclick="pokeN(3)">戳它三下</button>
+      <button onclick="pokeN(RHODES_PET.angerThreshold)">戳到它生气</button>
     </div>
     <textarea placeholder="在这里打字，确认输入框可以正常聚焦和输入…"></textarea>
   </div>
 </div>
-<div class="tip">拖动兔兔换位置 · 单击=摸它 · 双击=说话 · 右键=设置 · Esc 关面板</div>
+<div class="tip">拖动兔兔换位置 · 单击=摸它 · 双击=说话 · 一直戳会生气（眼泪是真的画出来的）· 右键=设置 · Esc 关面板</div>
+
+<script>
+/* 假界面上的这两个按钮：戳 N 下（戳太多它会生气，见 pet.js 的 ANGER 段）。
+   「戳到它生气」那个按钮按的是一下数不差地读到阈值（angerThreshold），
+   不写死数字 —— 阈值改了按钮不用跟着改。 */
+function pokeN(n) { for (var i = 0; i < n; i++) window.RHODES_PET.poke(); }
+</script>
 
 <script>
 /* 把运行期异常暴露到 <title>，这样无头 --dump-dom 就能直接看到脚本挂在哪 */
@@ -243,6 +252,171 @@ if (new URLSearchParams(location.search).get('probe') === 'follow') {
     t0 = performance.now();
     timer = setInterval(tick, 16);
   }, 300);
+}
+
+/* ?probe=wander —— 验证"自己溜达"走的是**随机路径**，而不是横着一条直线：
+     1) 确实在动（总位移够大）
+     2) **纵向也在动** —— 这是"不再是一条水平线"最直接的证据
+     3) 路径不是一条直线：记录每段移动方向，方向变化次数 >= 1（一段斜线 + 另一段换个方向）
+     4) 有停顿：静止采样占比不小（到了就歇，不是一直匀速挪）
+     5) 不越界
+     6) **不爬高**：全程待在"锚点 y ± bandY"的活动带里（用户要求"不许爬上去"）
+   和 follow 探针一样：无头浏览器不持续调度 requestAnimationFrame，
+   所以显式喂 dt（P.step）推进；又因为"休息"用的是 performance.now()，
+   所以必须用真实（虚拟快进）时钟分块推进，不能同步空转 600 次。 */
+if (new URLSearchParams(location.search).get('probe') === 'wander') {
+  var WN = [];
+  var WP = window.RHODES_PET;
+  var wnode = function () { return document.querySelector('.rp-pet'); };
+  var wbox = function () { return wnode().getBoundingClientRect(); };
+
+  var DURW = 45000;                     // 观察 45 秒（一段溜达 3~12 秒 + 歇 2.6~9 秒）
+  var wSamples = 0, wTravel = 0, wTravelY = 0, wStill = 0, wOutings = 0, wTurns = 0;
+  var wAng = null, wWasMoving = false, wPrevX = 0, wPrevY = 0, wStart = null, wOut = false;
+  var wHigh = 0, wBand = 0, wAnchor = 0;
+  var wt0 = 0;
+  /* 把上一次的配置记下来，跑完恢复（别把探针的开关留给用户） */
+  var wSave = { wander: WP.config.wander, follow: WP.config.follow };
+  WP.config.follow = false;
+  WP.config.wander = true;
+
+  var wtick = function () {
+    WP.step(1 / 60);
+    var r = wbox();
+    var dx = r.left - wPrevX, dy = r.top - wPrevY;
+    var moved = Math.abs(dx) + Math.abs(dy);
+    wSamples++;
+    /* ⚠ 阈值要贴合真实步长：溜达速度 26px/s、每帧喂 1/60s → **每帧只走约 0.43px**。
+       第一版把"静止"定在 < 0.5px，于是每一帧都被算成静止、偶尔一帧跨过 0.5px 又算成
+       "新的一段"—— 45 秒里数出 130 段、方向变化 0 次，全是探针自己的假象。 */
+    if (moved < 0.05) {
+      wStill++;
+      if (wWasMoving) wWasMoving = false;      // 一段走完了
+    } else {
+      wTravel += Math.abs(dx); wTravelY += Math.abs(dy);
+      if (!wWasMoving) { wWasMoving = true; wOutings++; }
+      /* 方向变化：把每次位移的角度记下来，与上一段比较（只在真正移动时比） */
+      var ang = Math.atan2(dy, dx);
+      if (wAng == null) wAng = ang;
+      else {
+        var d = Math.abs(ang - wAng);
+        if (d > Math.PI) d = 2 * Math.PI - d;
+        /* 阈值 25°：同一段直线里逐帧的角度几乎不变，跨段换方向才会超 */
+        if (d > 0.44 && moved > 0.25) { wTurns++; wAng = ang; }
+      }
+    }
+    if (r.left < 0 || r.top < 0 || r.right > window.innerWidth || r.bottom > window.innerHeight) wOut = true;
+    /* 活动带：比锚点高出的最大值（正数 = 爬出了带子）。留 3px 容差给亚像素 */
+    if (wAnchor) wHigh = Math.max(wHigh, wAnchor - r.top);
+    wPrevX = r.left; wPrevY = r.top;
+
+    if (performance.now() - wt0 >= DURW) {
+      clearInterval(wtimer);
+      WP.config.wander = wSave.wander;         // 恢复探针改过的开关
+      WP.config.follow = wSave.follow;
+      WN.push('跑了 ' + Math.round(performance.now() - wt0) + 'ms / ' + wSamples + ' 次采样');
+      WN.push('横向总位移=' + Math.round(wTravel) + 'px  纵向总位移=' + Math.round(wTravelY) +
+        'px（纵向要 > 20：这是"不是一条水平线"的证据）');
+      WN.push('走动段数=' + wOutings + '  方向变化=' + wTurns + ' 次（要 >= 1）');
+      WN.push('静止采样=' + Math.round(wStill / wSamples * 100) + '%（要有停顿，别一直匀速挪）');
+      WN.push('越界=' + wOut + '（必须 false）');
+      WN.push('最高爬到锚点上方 ' + Math.round(wHigh) + 'px（活动带 ' + wBand +
+        'px，必须 <= 带子 + 3px 容差）');
+      var inBand = wHigh <= wBand + 3;
+      var ok = wTravel > 150 && wTravelY > 20 && wTurns >= 1 && !wOut && inBand &&
+        (wStill / wSamples) > 0.15 && wOutings >= 2;
+      WN.push('结论: ' + (ok ? 'PASS 二维随机路径 + 有停顿 + 没爬出活动带' : 'FAIL'));
+      document.title = 'WANDERPROBE|' + WN.join(' | ');
+    }
+  };
+
+  var wtimer = 0;
+  setTimeout(function () {
+    var p0 = wbox();
+    /* 把锚点钉死在起点：不然"起点"可能是上一次探针留在 localStorage 里的位置，
+       活动带跟着乱跑，断言就没意义了。 */
+    WP.state.anchorY = p0.top;
+    wAnchor = p0.top;
+    wBand = 110;                       // 与 pet.js 的 WANDER.bandY 一致
+    WN.push('起点 (' + Math.round(p0.left) + ',' + Math.round(p0.top) + ') wander=' +
+      WP.config.wander + ' follow=' + WP.config.follow);
+    wPrevX = p0.left; wPrevY = p0.top;
+    wt0 = performance.now();
+    wtimer = setInterval(wtick, 16);
+  }, 300);
+}
+
+/* ?probe=name —— 验证"自定义名称"：
+     1) 没起名时头顶牌子是收起的
+     2) 在面板里输入 + 点「保存」→ 牌子出现、文字就是输入的名字
+     3) 牌子在**兔兔头顶之上**、水平居中（不是歪在一边）
+     4) 牌子**不在翻转层里**（镜像时字不会反着写）且 pointer-events:none（不挡界面）
+     5) 真的写进了存档（localStorage 的 config）
+     6) 留空再保存 → 牌子收起、存档里也清掉
+   ⚠ 这里用 class / textContent / 几何来断言，**不拿 opacity 当判据**：
+     出现用的是 0.22s 过渡，无头环境下过渡不推进，读到 0 是环境问题不是功能问题。 */
+if (new URLSearchParams(location.search).get('probe') === 'name') {
+  var NM = [];
+  setTimeout(function () {
+    var P = window.RHODES_PET;
+    var pet = document.querySelector('.rp-pet');
+    var flip = document.querySelector('.rp-flip');
+    var plate = document.querySelector('.rp-name');
+    if (!plate) { document.title = 'NAMEPROBE|FAIL 找不到 .rp-name 元素'; return; }
+    function cfgNameInStore() {
+      try { return JSON.parse(localStorage.getItem('dsh-rhodesPet.config') || '{}').name; }
+      catch (e) { return undefined; }
+    }
+    function geom() {
+      var r = pet.getBoundingClientRect(), n = plate.getBoundingClientRect();
+      return {
+        above: n.bottom <= r.top + 1,
+        dx: Math.round((n.left + n.width / 2) - (r.left + r.width / 2))
+      };
+    }
+    function save(v) {
+      var input = document.querySelector('#rp-name');
+      var btn = document.querySelector('#rp-act-name');
+      if (!input || !btn) return false;
+      input.value = v;
+      btn.click();
+      return true;
+    }
+
+    P.openPanel();                       // 面板是懒建的，先打开才有输入框
+    if (!document.querySelector('#rp-name')) {
+      document.title = 'NAMEPROBE|FAIL 面板里没有 #rp-name 输入框';
+      return;
+    }
+
+    /* 先清空一次：预览域名的 localStorage 里可能留着上一次探针存的名字 */
+    save('');
+    var emptyOff = !pet.classList.contains('rp-hasname') && plate.textContent === '';
+    NM.push('① 空名字：牌子收起=' + emptyOff + '（class=' + pet.className +
+      '，实际 opacity=' + getComputedStyle(plate).opacity + '）');
+
+    var NAME = '罗德岛兔兔';
+    var typed = save(NAME);
+    var g = geom();
+    var shown = pet.classList.contains('rp-hasname') && plate.textContent === NAME;
+    NM.push('② 输入「' + NAME + '」并保存：显示=' + shown +
+      '（牌子文字=「' + plate.textContent + '」）');
+    NM.push('③ 位置：在头顶之上=' + g.above + ' 水平偏差=' + g.dx + 'px（要 <= 2）');
+    var flipOk = !flip.contains(plate);
+    var pe = getComputedStyle(plate).pointerEvents;
+    NM.push('④ 不在翻转层里=' + flipOk + '（镜像不会把字翻过来）pointer-events=' + pe);
+    var stored = cfgNameInStore();
+    NM.push('⑤ 存档里的 name=「' + stored + '」（要等于刚输入的名字）');
+
+    save('');
+    var cleared = !pet.classList.contains('rp-hasname') && cfgNameInStore() === '';
+    NM.push('⑥ 留空再保存：牌子收起=' + cleared);
+
+    var ok = emptyOff && typed && shown && g.above && Math.abs(g.dx) <= 2 && flipOk &&
+      pe === 'none' && stored === NAME && cleared;
+    NM.push('结论: ' + (ok ? 'PASS' : 'FAIL'));
+    document.title = 'NAMEPROBE|' + NM.join(' | ');
+  }, 400);
 }
 
 /* ?probe=dragdrop —— 验证"拖动松手时有一记落地"：
@@ -714,6 +888,7 @@ if (new URLSearchParams(location.search).get('probe') === 'sound') {
   setTimeout(function () {
     var A = window.__AUDIO;
     var pet = document.querySelector('.rp-pet');
+    var P_sound = window.RHODES_PET;
     SD.push('AudioContext 创建=' + A.ctx + '（期望 >0）');
     var r = pet.getBoundingClientRect();
     var cx = Math.round(r.left + r.width / 2), cy = Math.round(r.top + r.height / 2);
@@ -761,9 +936,42 @@ if (new URLSearchParams(location.search).get('probe') === 'sound') {
     SD.push('单击发声 ' + tap.length + ' 组 [' + tap.join(' | ') + ']');
     SD.push('  没误响抓取/放下音=' + tapOk);
 
-    var pass = A.ctx > 0 && grabOk && putOk && tapOk;
-    SD.push('结论: ' + (pass ? 'PASS'
-      : 'FAIL ' + JSON.stringify({ ctx: A.ctx, 抓取音: grabOk, 放下音: putOk, 单击不误响: tapOk })));
+    /* ④ 生气 / 躲起来哭 / 喂一根哄好：三个新音效都得认得出来。
+       yip=520（被戳烦了）、sniff=880（吸鼻子）、sob=470；
+       三个频率都是特意挑的 —— 不和 640/760/1520/1600/240 任何一个重合。 */
+    var n3 = A.freqs.length;
+    P_sound.angerEnter();                       // 生气那一瞬间：yip
+    var yip = soundFreqs(n3);
+    var yipOk = soundNear(yip, 520);
+    SD.push('生气发声 ' + yip.length + ' 组 [' + yip.join(' | ') + '] 抓到 yip(520)=' + yipOk);
+
+    var n4 = A.freqs.length;
+    P_sound.angerHide();                        // 躲起来：sob(big) 470
+    var hide = soundFreqs(n4);
+    var hideOk = soundNear(hide, 470);
+    /* 吸鼻子（sniff, 880）挂在 cryLoop 里每 140ms 一拍上，而它的节流用的是
+       performance.now() —— 无头环境里那口钟几乎不走（虚拟时间只快进 setTimeout），
+       所以"等一拍就一定听得到 880"是不成立的。这里改成**看哭的循环有没有挂上**：
+       hide/sad 期间 sniffAt 必须是有限的（排了下一声吸鼻子），
+       而且 calming 之后必须不再发声。 */
+    var aCry = P_sound.anger();
+    var sniffScheduled = (aCry.state === 'hide' || aCry.state === 'sad') &&
+      isFinite(P_sound.state.anger.sniffAt) && isFinite(P_sound.state.anger.sobAt);
+    SD.push('躲起来时 抽泣/吸鼻子已排程=' + sniffScheduled +
+      '（state=' + aCry.state + ' sobAt=' + Math.round(P_sound.state.anger.sobAt) +
+      ' sniffAt=' + Math.round(P_sound.state.anger.sniffAt) + '）');
+
+    var n6 = A.freqs.length;
+    P_sound.comfort();                          // 哄好（喂一根走的就是它）
+    var after = soundFreqs(n6);
+    var quietOk = P_sound.anger().state === 'calm' && !soundNear(after, 470) && !soundNear(after, 880);
+    SD.push('哄好后 状态=' + P_sound.anger().state + ' 不再哭=' + quietOk +
+      '（这几组频率 [' + after.join(' | ') + ']）');
+
+    var all = A.ctx > 0 && grabOk && putOk && tapOk && yipOk && hideOk && sniffScheduled && quietOk;
+    SD.push('结论: ' + (all ? 'PASS'
+      : 'FAIL ' + JSON.stringify({ ctx: A.ctx, 抓取音: grabOk, 放下音: putOk, 单击不误响: tapOk,
+        yip: yipOk, sob: hideOk, 哭泣循环: sniffScheduled, 哄好不哭: quietOk })));
     document.title = 'SOUNDPROBE|' + SD.join(' | ');
   }, 700);
 }
@@ -973,16 +1181,20 @@ if (new URLSearchParams(location.search).get('probe') === 'paneldrag') {
   }, 600);
 }
 
-/* ?probe=facing —— 验证朝向：拖到左半边镜像（朝右）、回到右半边还原（朝左）
+/* ?probe=facing —— 验证朝向**只在"抓取 → 放下"两个动作做完之后**才变：
+     按住拖到左半边（手还按着）→ 必须**不**镜像；
+     在那个位置松手、落地站稳之后 → 才镜像成"朝右面向中间"。拖回右半边同理。
    另外确认腮红/口水/胡萝卜都挂在 .rp-inner 里 —— 翻转加在 inner 上，
    它们才会跟着一起镜像（只翻图片的话，脸翻了腮红却留在原地）。 */
 if (new URLSearchParams(location.search).get('probe') === 'facing') {
   var FA = [];
   setTimeout(function () {
     var pet = document.querySelector('.rp-pet');
-    var inner = document.querySelector('.rp-inner');
+    var flipEl = document.querySelector('.rp-flip');
     function mirrored() {
-      return /scaleX\(-1\)|matrix\(-1/.test(inner.style.transform || '');
+      /* 镜像挂在 .rp-flip（inner 的包装层）上 —— 这样翻转才能走 200ms 过渡，
+         而 .rp-inner 的 transform 每帧都被呼吸/蹦跳重写，挂过渡会被一帧一帧重置。 */
+      return /scaleX\(-1\)|matrix\(-1/.test(flipEl.style.transform || '');
     }
     function pev(type, x, y) {
       pet.dispatchEvent(new PointerEvent(type, {
@@ -990,15 +1202,18 @@ if (new URLSearchParams(location.search).get('probe') === 'facing') {
         pointerId: 41, isPrimary: true, button: 0, buttons: 1
       }));
     }
-    /* 从当前位置按住拖到目标 x */
-    function dragTo(targetX) {
+    function petY() { return Math.round(pet.getBoundingClientRect().top + 30); }
+    /* 按住并拖到目标 x —— **刻意不松手**，用来验"拖着的时候不转身" */
+    function grabTo(targetX) {
       var r = pet.getBoundingClientRect();
-      var y = Math.round(r.top + 30);
-      pev('pointerdown', Math.round(r.left + 30), y);
-      pev('pointermove', targetX, y);
-      pev('pointerup', targetX, y);
-      var r2 = pet.getBoundingClientRect();
-      return Math.round(r2.left);
+      pev('pointerdown', Math.round(r.left + 30), petY());
+      pev('pointermove', targetX, petY());
+      return Math.round(pet.getBoundingClientRect().left);
+    }
+    /* 松手 = 放下。落地动画 240ms，所以等它站稳了再读朝向（读早了必然还是旧朝向） */
+    function releaseAndWait(step) {
+      pev('pointerup', 0, petY());      // 拖动过 → clientX 用不到（只有"没拖动"才走 touch）
+      setTimeout(step, 500);
     }
 
     var vw = window.innerWidth, mid = Math.round(vw / 2);
@@ -1007,27 +1222,45 @@ if (new URLSearchParams(location.search).get('probe') === 'facing') {
     var initOk = !mirrored();
 
     var inInner = ['.rp-blush', '.rp-drool', '#rpCarrot'].every(function (s) {
-      return !!inner.querySelector(s);
+      return !!flipEl.querySelector(s);
     });
-    FA.push('腮红/口水/胡萝卜都在 inner 内=' + inInner + '（才会一起镜像）');
+    FA.push('腮红/口水/胡萝卜都在翻转层内=' + inInner + '（才会一起镜像）');
 
-    var lx = dragTo(60);
-    FA.push('拖到左侧 x=' + lx + ' 镜像=' + mirrored() + '（期望 true：朝右面向中间）');
-    var leftOk = mirrored();
+    var lx = grabTo(60);
+    var heldLeftOk = !mirrored();
+    FA.push('拖到左侧 x=' + lx + ' **还没松手**镜像=' + mirrored() + '（期望 false：拖着不转身）');
+    releaseAndWait(function () {
+      var dropLeftOk = mirrored();
+      FA.push('在左侧放下之后镜像=' + mirrored() + '（期望 true：朝右面向中间）');
 
-    var rx = dragTo(vw - 140);
-    FA.push('拖回右侧 x=' + rx + ' 镜像=' + mirrored() + '（期望 false：朝左面向中间）');
-    var rightOk = !mirrored();
+      var rx = grabTo(vw - 140);
+      var heldRightOk = mirrored();
+      FA.push('拖回右侧 x=' + rx + ' **还没松手**镜像=' + mirrored() + '（期望 true：仍然没变）');
+      releaseAndWait(function () {
+        var dropRightOk = !mirrored();
+        FA.push('在右侧放下之后镜像=' + mirrored() + '（期望 false：朝左面向中间）');
 
-    /* 迟滞：停在正中偏一点点时不该来回翻 */
-    var cx = dragTo(mid - 10);
-    FA.push('停在中线左侧 10px x=' + cx + ' 镜像=' + mirrored() + '（迟滞内，沿用上一次状态）');
-
-    var pass = initOk && inInner && leftOk && rightOk;
-    FA.push('结论: ' + (pass ? 'PASS' : 'FAIL ' + JSON.stringify({
-      初始朝左: initOk, 部件都在inner: inInner, 左侧镜像: leftOk, 右侧还原: rightOk
-    })));
-    document.title = 'FACINGPROBE|' + FA.join(' | ');
+        /* 中线：判据是**兔兔自己的中心**，一过中线就翻（不再有 24px 迟滞）。
+           抓取点是"兔兔左边 +30px"，所以要把它的**中心**放到中线左侧 10px，
+           指针得落在 mid - 宽/2 + 20。 */
+        var pw = pet.getBoundingClientRect().width;
+        var cx = grabTo(mid - pw / 2 + 20);
+        var heldMidOk = !mirrored();
+        FA.push('中心在中线左 10px（未松手）x=' + cx + ' 镜像=' + mirrored() + '（期望 false：拖着不转）');
+        releaseAndWait(function () {
+          var midFlipOk = mirrored();
+          FA.push('中心在中线左 10px 放下后镜像=' + mirrored() +
+            '（期望 true：判据就是中心 vs 中线，一过线就翻）');
+          var pass = initOk && inInner && heldLeftOk && heldRightOk && heldMidOk &&
+            dropLeftOk && dropRightOk && midFlipOk;
+          FA.push('结论: ' + (pass ? 'PASS' : 'FAIL ' + JSON.stringify({
+            初始朝左: initOk, 部件都在inner: inInner, 拖着不转身: heldLeftOk && heldRightOk,
+            左侧放下后镜像: dropLeftOk, 右侧放下后还原: dropRightOk, 过中线就翻: midFlipOk
+          })));
+          document.title = 'FACINGPROBE|' + FA.join(' | ');
+        });
+      });
+    });
   }, 600);
 }
 
@@ -1079,6 +1312,216 @@ if (new URLSearchParams(location.search).get('probe') === 'level') {
       });
     });
   }, 150);
+}
+
+/* ?probe=anger —— 验证"戳到阈值会生气，1 秒后躲到屏幕边上哭"。
+   ============================================================================
+   两个测试手段是必须的，缺一个都验不出来：
+
+   ① **不能靠速率戳。** 计数带 1.6 秒的回落窗口（ANGER_COOL），
+      合成事件在同一个 tick 里连发 N-1 次的话，第 N-1 次的 poke() 会看到
+      `now - last >= 1600`，于是每次都先减 1 再加 1 —— 计数永远停在 1，
+      根本到不了阈值。所以"到量会生气"这条走**只剩一下贴脸测试**：
+      把计数器摆成 `angerThreshold - 1`，再戳真的一下，看它有没有炸。
+      "戳了会不会计数"则由一次真戳 + 读 count 来验。
+      ⚠ 阈值一律读 `P.angerThreshold`、不写死数字：阈值从 50 改到 30 之后，
+        写死 49 的探针会永远停在"摆成 49、戳一下才 50"的假失败上。
+
+   ② **无头环境要压缩计时。** 真实时长加起来 7.2 秒
+      （生气 1 秒 + 躲边 3.2 秒 + 委屈 3 秒），探针等不起也用不上。
+      所以用 ?angerMs=0.12 把三段一起缩短，再靠等更长的时间点去采样。
+      ⚠ 采样点也得按压缩比算：ANG_HIDE 真实 3200ms，压缩后约 384ms，
+        探针必须等 ~1.2 秒（≈ ANG_HIDE 的 3 倍）才敢断言"已经挪回来了"。
+   ============================================================================ */
+if (new URLSearchParams(location.search).get('probe') === 'anger') {
+  var AG = [];
+  setTimeout(function () {
+    var P = window.RHODES_PET;
+    var pet = document.querySelector('.rp-pet');
+    var petBox = function () { return pet.getBoundingClientRect(); };
+    var tears = document.querySelectorAll('.rp-tear');
+    var css = function (sel, prop) { return getComputedStyle(document.querySelector(sel))[prop]; };
+    var ang = function () { return P.anger(); };
+    AG.push('x) 可见性：opacity=' + getComputedStyle(pet).opacity + ' 内联 transform=' +
+      (pet.style.transform || '(空)').slice(0, 46) + ' 视口=' + window.innerWidth + 'x' + window.innerHeight);
+
+    /* 0) 眼泪是画出来的：**一条**，正对那只可见的眼睛 */
+    var svgPaths = 0;
+    for (var t = 0; t < tears.length; t++) svgPaths += tears[t].querySelectorAll('svg path').length;
+    var tl = tears[0] ? tears[0].getBoundingClientRect() : null;
+    AG.push('0) 眼泪元素=' + tears.length + '（含 path ' + svgPaths / Math.max(1, tears.length) +
+      ' 条）left=' + css('.rp-tear', 'left').replace(/px$/, ''));
+    /* 只该有一条：多画一条就是"两行眼泪"，少一条就是没眼泪 */
+    var tearsDrawn = tears.length === 1 && svgPaths === 1;
+    /* 这一条必须**对准那只可见的眼睛**（素材 332×305 量出来：眼睛 ≈ (50%,21%)，
+       瞳孔横跨 48%~52%），不能飘到鼻子/脸颊/耳朵上（真飘过两次：一次挂耳朵上、
+       一次挂嘴角上 —— 都是把"鼻子"的坐标当成"眼睛"用了）。
+       判据两条：
+         · 横向：元素中心落在眼睛中心 5% 以内（泪珠固定在元素水平中点，
+           所以元素中心就是泪珠的横向位置）；
+         · 纵向：泪珠中心落在下眼睑（23%）附近 ±6% —— 太靠上压在瞳孔中间、
+           太靠下就跑到腮帮子上了。泪珠在 SVG 里是 17/160 处，元素高 42%，
+           所以泪珠中心 = 元素上沿 + 0.106 × 元素高。 */
+    var petBox2 = petBox();
+    var petW = petBox2.width, petL = petBox2.left, petH = petBox2.height;
+    var tMid = tl ? (tl.left + tl.width / 2 - petL) / petW : NaN;
+    var EYE_X = 0.50, EYE_LID_Y = 0.23;
+    var tearsApart = Math.abs(tMid - EYE_X) < 0.05;
+    var dropY = (parseFloat(css('.rp-tear', 'top')) +
+      0.106 * parseFloat(css('.rp-tear', 'height'))) / petH;
+    var tearsAtEye = Math.abs(dropY - EYE_LID_Y) < 0.06;
+    AG.push('0b) 眼泪对准眼睛=' + (tearsApart && tearsAtEye) + '（泪痕中心 ' +
+      Math.round(tMid * 100) + '% · 泪珠中心纵向 ' + Math.round(dropY * 100) +
+      '% · 量出来的眼睛 (50%, 21%)、下眼睑 23%）');
+
+    /* 1) 真戳一下：计数 +1（用 state 读，不信 DOM）。
+       先 reset —— 这条路径得从"没生气"开始，否则 poke() 会因为 state 不是 calm 直接返回。 */
+    P.comfort();
+    var n0 = ang().n;
+    var pev = function (type, x, y) {
+      pet.dispatchEvent(new PointerEvent(type, {
+        clientX: Math.round(x), clientY: Math.round(y), bubbles: true, cancelable: true,
+        pointerId: 7, pointerType: 'mouse', isPrimary: true, button: 0
+      }));
+    };
+    var r = petBox();
+    pev('pointerdown', r.left + r.width / 2, r.top + r.height / 2);
+    pev('pointerup', r.left + r.width / 2, r.top + r.height / 2);
+    var n1 = ang().n;
+    AG.push('1) 戳一下：计数 ' + n0 + '->' + n1 + (n1 === n0 + 1 ? ' OK' : ' 错!'));
+    var tapCounts = n1 === n0 + 1;
+
+    /* 2) 到量才炸：摆成"差一下"，戳最后这一下 —— 应当立刻进入 angry（眼泪 + 飞机耳） */
+    var need = P.angerThreshold;
+    P.state.anger.n = need - 1;
+    pev('pointerdown', r.left + r.width / 2, r.top + r.height / 2);
+    pev('pointerup', r.left + r.width / 2, r.top + r.height / 2);
+    var a50 = ang();
+    /* ⚠ 这里**不能用 `tearOp === '1'` 当判据**：入场动画（rp-tearin .22s）刚起步，
+       任何"立刻读"都会读到 0 或中间值 —— 那条路只能证明 CSS 规则在，证明不了别的。
+       所以分成两条：
+         · tearOp / sweep：CSS 规则与"在淌"的动画挂上了没有（此处只做记录）
+         · maxTearOp：整段时间里见过的**最大**计算 opacity（见下面的轮询），
+           这才是"用户真的看得见"的证据，判断放在最后的 5b/结论里。 */
+    var tg = document.querySelector('.rp-tear');
+    var tgTr = tg.style.transition;
+    tg.style.transition = 'none';
+    var tearOp = getComputedStyle(tg).opacity;
+    tg.style.transition = tgTr;
+    var tearOpNow = parseFloat(getComputedStyle(tears[0]).opacity);
+    var sweep = tg.querySelector('svg').getAnimations ? tg.querySelector('svg').getAnimations().length : -1;
+    var angryNow = a50.state === 'angry' && a50.tears && sweep > 0;
+    /* 2b) 生气那一秒的**整套表情**挂上了没有。
+       这里不看 opacity，而是看 `.rp-img` 的 filter —— 它没有过渡，
+       读到的就是当下真值，不会被"过渡没推进"骗过去。
+       （曾经整套规则写成 .rp-anger、而引擎加的是 .rp-angry，于是撇嘴/脸红/发抖
+         全是死的；眼泪那条因为同时列了两个类才活着，自检当年就是被这个骗过去的。） */
+    var imgEl = pet.querySelector('.rp-img');
+    var faceOn = String(getComputedStyle(imgEl).filter).indexOf('saturate') >= 0;
+    var shiver = imgEl.getAnimations ? imgEl.getAnimations().length : -1;
+    angryNow = angryNow && faceOn;
+    AG.push('2b) 生气表情挂上=' + faceOn + '（filter 里有 saturate）发抖动画数=' + shiver +
+      (faceOn ? ' OK' : ' 错!'));
+    /* "用户真的看得见"这条**不能单点采样**：戳满的这一瞬间过渡才刚起步，
+       读到的必然是 0（淡入要 0.22s）。所以从这里开始轮询记录**最大**计算 opacity，
+       一直记到最后出结论 —— 期间只要有一刻 > .5，就说明它真的显示出来了。 */
+    var maxTearOp = tearOpNow;
+    var tearPoll = setInterval(function () {
+      var v = parseFloat(getComputedStyle(tears[0]).opacity);
+      if (v > maxTearOp) maxTearOp = v;
+    }, 30);
+    AG.push('2) 第 ' + need + ' 下：state=' + a50.state + ' 眼泪 opacity=' + tearOp +
+      ' 扫过动画=' + sweep + ' 飞机耳=' + a50.earsDown + (angryNow ? ' OK' : ' 错!'));
+
+    /* 3) 接下来是"躲到屏幕边"。
+       这里**用 angerHide() 显式推进**，而不是干等 ANG_ANGRY 那条定时器：
+       压缩计时（?angerMs=0.12）下整段情绪只有 ~0.86s，而无头环境的虚拟时钟会把
+       定时器成批快进 —— 轮询常常一步跨过整个 'hide' 窗口，读到的已经是 'calm'，
+       于是"没贴到边""点不到=false"全是假失败（这一版之前就一直这么 FAIL）。
+       `angerHide()` 是引擎留给自检的同步入口（README 里有），用它把状态摆到
+       "刚躲好"，剩下的"挪到位"仍然靠轮询等真实布局。 */
+    P.angerHide();
+    var waitFor = function (fn, limit, done) {
+      var t0 = Date.now();
+      (function poll() {
+        if (fn() || Date.now() - t0 > limit) { done(); return; }
+        setTimeout(poll, 16);
+      })();
+    };
+    /* 等到"已经躲好、而且挪的动作停了"（angSlide 结束后 S.anger.slideT 不再被重排） */
+    waitFor(function () {
+      var a = ang();
+      return a.state === 'hide' && !P.state.anger.slideT;
+    }, 4000, function () {
+      var ah = ang();
+      /* ⚠ 位置的断言**只能用引擎自己的坐标**，不能用 getBoundingClientRect 和 window.innerWidth。
+         实测这个无头环境里 rect 和 innerWidth 不是一个坐标系：
+         一个 left:800px 的普通盒子 rect 也是 800（对得上），
+         但带 transform:translate3d(1228px,…) scale(1.6) 的盒子 rect.left 报 1183
+         —— 而按 CSS 规则应当是 1228 - 0.6×75 = 1183 才对（差 285）。
+         也就是说 rect 被浏览器内部的一次布局缩放动了，拿它比 innerWidth 会得出
+         "可见宽 150/150、贴边 +365px"这种完全不成立的数（第一版就误判成 FAIL）。
+         引擎自己的 S.x / S.W 始终是 CSS 像素，和 layout() 用的 innerWidth 同一坐标系，
+         所以这里直接读 pet 的内联 transform（放不放进视口是**布局**的事，
+         引擎算出来的位置就是真实位置 —— 视觉效果交给截图去确认）。 */
+      var ge = (function () {
+        var m = /translate3d\((-?[\d.]+)px,\s*(-?[\d.]+)px/.exec(pet.style.transform || '');
+        return m ? { x: +m[1], y: +m[2], w: ah.w } : { x: NaN, y: NaN, w: ah.w };
+      })();
+      var leftSide = (ge.x + ge.w / 2) <= window.innerWidth / 2;
+      var out = leftSide ? -ge.x : (ge.x + ge.w - window.innerWidth);   // 探出视口多少
+      var vis = ge.w - out;                                            // 还剩多少可见
+      /* 判据：确实探出去一块（"躲起来"），但脸还留着（"在看你"）。
+         两头都要卡住 —— 只判"探出去了"会放过"整只都飞出屏幕"，
+         只看"还剩一点"会放过"只是挪到边上、根本没躲"。
+         另外那只可见的眼睛在素材的 46% 处，所以露出比例必须明显大于 46%，
+         否则连眼睛都被裁掉、眼泪就成了无源之水（这一条是拿着截图量出来的）。 */
+      var nearEdge = out > ge.w * 0.2 && out < ge.w * 0.7 && vis > ge.w * 0.5;
+      AG.push('3) 躲边：state=' + ah.state + ' x=' + Math.round(ge.x) +
+        ' 贴' + (leftSide ? '左' : '右') + '边：探出=' + Math.round(out) + 'px 可见宽=' +
+        Math.round(vis) + '/' + Math.round(ge.w) + ' 点不到=' + ah.clicked +
+        ' [视口 ' + window.innerWidth + ' · 内联 transform=' + (pet.style.transform || '').slice(0, 44) + ']' +
+        (nearEdge && ah.clicked && ah.state === 'hide' ? ' OK' : ' 错!'));
+      var hidOk = nearEdge && ah.clicked && ah.state === 'hide';
+
+      /* 4) 哭完自己挪回来、恢复原状。
+         ⚠ 这里**不能只等固定的 1200ms**：压缩计时下 ANG_HIDE 只有 384ms，
+           但定时器是被虚拟时间快进的、而"挪回来"那串帧是真实时间推进的 ——
+           两者不同步（无头环境的时钟有两个）。所以等的是**状态**：轮询到 calm 为止。 */
+      waitFor(function () { return ang().state === 'calm'; }, 6000, function () {
+        var af = ang();
+        var backX = Math.abs(af.x - ah.home.x) < 2;
+        var recovered = af.state === 'calm' && !af.tears && !af.earsDown && backX &&
+          getComputedStyle(pet).pointerEvents !== 'none';
+        AG.push('4) 恢复：state=' + af.state + ' x=' + Math.round(af.x) + '（躲前 ' +
+          Math.round(ah.home.x) + '）眼泪=' + af.tears + ' 飞机耳=' + af.earsDown +
+          (recovered ? ' OK' : ' 错!'));
+
+        /* 5) 喂一根就哄好：再惹它一次，喂食 → 立刻 calm */
+        P.state.anger.n = P.angerThreshold - 1;
+        var bf = petBox();
+        pev('pointerdown', bf.left + bf.width / 2, bf.top + bf.height / 2);
+        var a5 = ang();
+        P.feed();
+        var a6 = ang();
+        AG.push('5) 哄好：惹毛后 state=' + a5.state + ' → 喂一根后 state=' + a6.state +
+          (a6.state === 'calm' ? ' OK' : ' 错!'));
+
+        /* 收尾：停掉眼泪轮询，用"整段时间里见过的最大可见度"下判断 */
+        clearInterval(tearPoll);
+        var tearsSeen = maxTearOp > 0.5;
+        AG.push('5b) 眼泪最大可见度=' + maxTearOp.toFixed(2) + ' → 真的看得见=' + tearsSeen);
+        var pass = tearsDrawn && tearsApart && tearsAtEye && tearsSeen && tapCounts && angryNow &&
+          hidOk && recovered && a6.state === 'calm';
+        AG.push('结论: ' + (pass ? 'PASS' : 'FAIL ' + JSON.stringify({
+          画了眼泪: tearsDrawn, 眼泪对准眼睛: tearsApart && tearsAtEye, 眼泪看得见: tearsSeen,
+          戳了会计数: tapCounts,
+          到量生气: angryNow, 躲到边上: hidOk, 哭完恢复: recovered, 喂食哄好: a6.state === 'calm'
+        })));
+        document.title = 'ANGERPROBE|' + AG.join(' | ');
+      });
+    });
+  }, 200);
 }
 </script>
 </body>

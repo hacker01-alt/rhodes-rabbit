@@ -28,6 +28,32 @@ DSH 的**开机启动动画**插件：打开 Harness 时**先播完整段罗德�
 > 解析前的空白，以及页面里在我这段代码之前就渲染的东西）由主进程决定，插件改不到。
 > 想让窗口都晚点出现，只能改 DSH 桌面端主进程。
 
+### 动画期间必须**自己**铺满整屏，不能指望黑幕（踩过）
+
+动画画布是固定的 **1920×1080**（`.rb-stage`），用 `min(w/1920, h/1080)` 等比缩放居中 ——
+窗口比例不是 16:9 时，上下（宽窗口）或左右（窄窗口）必然留出空白带。
+
+早先 `.rb-root` 是 `background:transparent`，觉得"反正有黑幕挡着"。但**黑幕在动画开始绘制时就撤了**，
+那两条留空带子于是直接透出下面的 Harness 界面 —— 用户看到的就是
+**"窗口一缩小，启动动画就没盖满、底部露出一截状态栏/输入框"**（窗口越接近方形，露得越多）。
+
+修法两条（缺一不可）：
+
+```css
+.rb-root{ ... background:#000 }              /* 留空处由根节点自己刷黑 */
+.rb-root.rb-fadeout{opacity:0;transition:opacity .6s ease}   /* 淡出改成淡整层 */
+```
+
+- 根节点刷黑之后，黑幕撤幕前后都是 `#000`，接得上（撤幕不会闪一下）。
+- 淡出**必须淡整层**，不能只淡 `.rb-stage`：只淡舞台的话，那层黑底不跟着淡 ——
+  动画淡完了、带子还黑着，最后硬切才露出界面。淡出时长 `.6s` 和三处
+  `CLOCK.later(660/700)` 是配套的，别单独改。
+- 这条**只在插件里需要**：`rhodes-loading` 那个独立预览页 `html,body` 本来就是黑的，不会有露底问题。
+
+> 复核方法：`tools/_tmp_cover_host.html`（临时宿主页，带一条假状态栏）在**非 16:9** 窗口下截图 ——
+> 盖住了就看不到那条假状态栏。实测（1374×807 视口，上下各留空 17px）：
+> 修之前底部 20px 处命中 `fakebar`（露出来了），修之后是 `rb-stage`，退场后又能重新命中 `fakebar`。
+
 ## 它做什么
 
 - **启动序列期间压住别的插件浮层**：动画的舞台是 `.rb-root/.rb-stage`（z-index 9），而余额鲸鱼挂件这类
@@ -184,12 +210,12 @@ python rhodes-boot-plugin/tools/build_client.py
 
 # 2) 打包
 cd rhodes-boot-plugin
-pnpm pack --pack-destination ..            # 产出 dsh-rhodes-boot-1.18.0.tgz
+pnpm pack --pack-destination ..            # 产出 dsh-rhodes-boot-1.18.1.tgz
 
 # 3) 放到稳定目录（profile 依赖指向它，别随便挪）并安装
-copy dsh-rhodes-boot-1.18.0.tgz %USERPROFILE%\dsh-bundles\
-# 让插件管理器装：install_bundle 目标 = %USERPROFILE%\dsh-bundles\dsh-rhodes-boot-1.18.0.tgz
-# 或命令行：dsh plugin --profile desktop add %USERPROFILE%\dsh-bundles\dsh-rhodes-boot-1.18.0.tgz
+copy dsh-rhodes-boot-1.18.1.tgz %USERPROFILE%\dsh-bundles\
+# 让插件管理器装：install_bundle 目标 = %USERPROFILE%\dsh-bundles\dsh-rhodes-boot-1.18.1.tgz
+# 或命令行：dsh plugin --profile desktop add %USERPROFILE%\dsh-bundles\dsh-rhodes-boot-1.18.1.tgz
 ```
 
 **客户端插件的改动需要重启 Harness 才会生效**（安装结果里会写 `application: restart-required`），

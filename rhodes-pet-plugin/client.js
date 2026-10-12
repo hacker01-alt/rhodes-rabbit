@@ -62,6 +62,7 @@ window.__ModuleLoader__.load({
 
       /* ======================= 配置 ======================= */
       var DEFAULTS = {
+        name: '',           // 自定义名称：起名后会显示在兔兔头顶（空 = 不显示）
         size: 150,          // 兔兔宽度(px)
         opacity: 1,         // 整体透明度
         sound: true,        // 音效
@@ -276,6 +277,17 @@ window.__ModuleLoader__.load({
            （正常靠拖胡萝卜 / 吃完触发，headless 里不好制造） */
         blush: USE_QUERY && Q.blush === '1',
         drool: USE_QUERY && Q.drool === '1',
+        /* 生气/哭：?mad=1 直接摆出生气那一刻（眼泪 + 飞机耳 + 撇嘴 + 抖），
+           ?mad=2 摆成"躲在屏幕边上抽泣"。用 mstat 是因为 `state` 已经被上面用掉了。 */
+        mad: USE_QUERY && Q.mad != null ? Number(Q.mad) : null,
+        mstat: (USE_QUERY && Q.mstat) || '',
+        /* ?pose=hide 拍照用：直接摆成"躲在屏幕边抽泣"的静止姿态（不跑挪过去的动画）
+           ⚠ 这个键必须在 DEBUG 里声明：严格模式下给未声明的属性赋值会直接抛 ReferenceError，
+             而且报出来是"Script error."（跨域报错的标准模样），极难定位 —— 踩过一次。 */
+        pose: (USE_QUERY && Q.pose) || '',
+        /* 生气计时压缩（自检用）：把"生气 1 秒 / 躲起来 3.8 秒 / 委屈 3.2 秒"按比例缩短，
+           否则一个探针要等 8 秒以上。真实运行永远是 1。 */
+        angerMs: USE_QUERY && Q.angerMs != null ? Number(Q.angerMs) : 1,
         /* 截图用：把兔兔摆到指定的 x（比如 ?x=60 看它在左半边镜像后的样子） */
         x: USE_QUERY && Q.x != null ? Number(Q.x) : null
       };
@@ -300,6 +312,23 @@ window.__ModuleLoader__.load({
         } catch (e) { /* noop */ }
       }
       if (DEBUG.follow) cfg.follow = true;
+      /* 生气：?mad=1 直接摆出生气那一刻（眼泪）、?mad=2 摆成躲在屏幕边上抽泣。
+         用 setTimeout(…,80) 而不是同步执行 —— 这几个动作都靠 class + 过渡/动画表现，
+         得等元素先进入文档、浏览器认下来，否则第一帧的过渡会被吞掉（腮红/口水同此理）。
+         截图时配合 ?freeze=1 停住主动画循环。 */
+      if (DEBUG.mad === 1 || DEBUG.state === 'mad' || DEBUG.mstat === 'mad') {
+        setTimeout(function () {
+          S.anger.n = ANGER_N;
+          enterAnger();
+        }, 80);
+      } else if (DEBUG.mad === 2 || DEBUG.state === 'hide' || DEBUG.mstat === 'hide') {
+        setTimeout(function () {
+          enterAnger();
+          goHide();
+        }, 80);
+      }
+      /* 计时压缩只在调试页生效（0/NaN 都当 1，不能让它把阶段时长算成 0 或负数） */
+      if (!(DEBUG.angerMs > 0)) DEBUG.angerMs = 1;
 
       /* ======================= 工具 ======================= */
       var TAU = Math.PI * 2;
@@ -348,7 +377,16 @@ window.__ModuleLoader__.load({
           '（把脸埋进外套里）', '（警惕地盯着光标）'],
         /* 升级时说的话（按新等级挑） */
         levelup: ['（它把外套裹紧了一点，站得更直了。）', '唔……好像变沉了一点？',
-          '（它拍了拍自己的肚子，很满意。）', '又长了一点点！', '（它转了个圈给你看。）']
+          '（它拍了拍自己的肚子，很满意。）', '又长了一点点！', '（它转了个圈给你看。）'],
+        /* 被戳烦了：紫红色，最后一句会说清"再戳就要生气了" */
+        angry: ['别戳了！', '唔……！', '（耳朵往后压）', '博士！', '（把脸转开）',
+          '再戳我要生气了', '（尾巴炸了一下）'],
+        /* 躲在屏幕边上哭：淡蓝，带省略号，读起来是抽抽搭搭的 */
+        cry: ['呜……', '呜呜……', '（抽了抽鼻子）', '……博士真坏',
+          '（把脸埋进外套里）', '呜……不讲道理', '（缩到屏幕边上去了）'],
+        /* 委屈（哭完之后那几秒）：摸它会说这些 */
+        sad: ['（吸了吸鼻子）', '……哼。', '（耳朵还压着）', '你别戳我了。',
+          '（偷偷看了你一眼）']
       };
 
       /* ======================= 等级与好感 =======================
@@ -599,6 +637,36 @@ window.__ModuleLoader__.load({
             tone(990 * j, 0.14, 0.09, 'sine', 1320 * j, 0.09);
             tone(1320 * j, 0.30, 0.07, 'triangle', 1980 * j, 0.18);
             noise(0.22, 0.03, 4200, 0.7, 0.02);
+          },
+          /* ============ 被戳烦了 / 哭 ============
+             三个音刻意都往下走 —— 这只好脾气的兔子所有开心的音（touch / happy / levelUp）
+             都是上扬的，往下走就成了"它不高兴"最直接的听觉线索。 */
+          /* 被戳烦了：短促的下滑"呜"
+             （520 这个基频是特意选的：它不和任何已有音效重合 ——
+               抓取 640/1600、放下 760/240、摸头 760/1520 —— 所以 probe=sound 能认出它来） */
+          yip: function () {
+            if (!cfg.sound || !ensure()) return;
+            var j = rnd(0.93, 1.09);
+            tone(520 * j, 0.13, 0.10, 'triangle', 330 * j);
+            tone(780 * j, 0.06, 0.035, 'sine', 560 * j, 0.02);
+            noise(0.05, 0.035, rnd(1500, 2100), 0.9);
+          },
+          /* 抽泣一声：两段下滑，像压着嗓子在哭 */
+          sob: function (big) {
+            if (!cfg.sound || !ensure()) return;
+            var j = rnd(0.88, 1.12);
+            var g = big ? 0.115 : 0.075;
+            tone(470 * j, big ? 0.26 : 0.19, g, 'triangle', 250 * j);
+            tone(360 * j, 0.17, g * 0.75, 'sine', 208 * j, 0.15);
+            if (big) tone(210 * j, 0.22, 0.045, 'sine', 160 * j, 0.05);
+          },
+          /* 吸鼻子：一小段带通噪声先"吸"上来，再一记很轻的下滑
+             （880 也不和已有音效重合，probe 同样认得出） */
+          sniff: function () {
+            if (!cfg.sound || !ensure()) return;
+            var j = rnd(0.9, 1.12);
+            noise(0.11, 0.05, 880 * j, 2.2);
+            tone(310 * j, 0.09, 0.05, 'sine', 215 * j, 0.09);
           }
         };
       })();
@@ -615,9 +683,31 @@ window.__ModuleLoader__.load({
         '  transition:opacity .3s ease;will-change:transform}',
         '.rp-pet.rp-drag{cursor:grabbing}',
         '.rp-inner{position:relative;transform-origin:50% 92%;will-change:transform}',
+        /* 翻转包装层：镜像挂在这里，而不是 .rp-inner 上。
+           原因有两条：
+             1. 镜像要连腮红 / 口水 / 胡萝卜一起翻 —— 它们都挂在 .rp-inner 里；
+             2. 翻转要走一条 **200ms** 的过渡（用户要求"转身要快一些，200ms"），
+                而 .rp-inner 的 transform **每帧都被呼吸/蹦跳重写**，
+                过渡挂在它上面会被一帧一帧重置 —— 看起来跟没动画一样。
+                这一层没别人碰，正好挂过渡。
+           它是普通块级元素、宽度撑满兔兔，transform-origin 默认 50% 50%，
+           所以镜像是绕自身竖直中轴翻，**不产生位移**。
+           ⚠ 不要给 .rp-pet 加子选择器 `>` 去选 .rp-inner：中间隔着这一层。 */
+        '.rp-flip{position:relative;width:100%;transform-origin:50% 50%;will-change:transform;',
+        '  transition:transform .2s ease}',
+        /* 图片上的滤镜一律从 `--rp-glow` 拼出来。
+           ⚠ 这里踩过一个"静默失效"：等级辉光是 JS 按档位算颜色，以前直接写
+             `img.style.filter = …` —— **内联样式优先级最高**，于是下面三条 class 规则
+             （rp-dim 面板变暗、rp-angry 生气脸红、rp-mouth 拖到嘴边亮一下）全被压掉，
+             一条都没生效，而且代码看着完全正常。
+           现在 JS 只写一个自定义属性（`img.style.setProperty('--rp-glow', …)`），
+           基础滤镜和"叠加效果"都在 CSS 里拼 —— 谁也不会再压掉谁。
+           兜底值给的是那条默认投影（不能写 `none`：`none` 不能出现在滤镜函数列表里，
+           整条声明会被丢掉，等于又把叠加效果弄没了）。 */
         '.rp-img{display:block;width:100%;height:auto;pointer-events:none;',
-        '  filter:drop-shadow(0 10px 18px rgba(0,0,0,.55))}',
-        '.rp-layer.rp-dim .rp-img{filter:drop-shadow(0 10px 18px rgba(0,0,0,.55)) brightness(1.06)}',
+        '  filter:var(--rp-glow,drop-shadow(0 10px 18px rgba(0,0,0,.55)))}',
+        '.rp-layer.rp-dim .rp-img{',
+        '  filter:var(--rp-glow,drop-shadow(0 10px 18px rgba(0,0,0,.55))) brightness(1.06)}',
 
         /* 腮红：吃完胡萝卜后在脸颊上泛一下。
            位置从素材量出来：眼睛中心约 (51%,20%)、鼻子约 (44%,30%)。
@@ -649,6 +739,90 @@ window.__ModuleLoader__.load({
         '.rp-ear.on{opacity:.92}',
         '.rp-ear.wig{animation:rp-earwig .38s ease-in-out 2}',
         '@keyframes rp-earwig{0%,100%{transform:rotate(0)}30%{transform:rotate(-13deg)}70%{transform:rotate(9deg)}}',
+        /* 飞机耳：生气/委屈时耳朵向后压。
+           ⚠ 必须带上 `.rp-ear.on`（0,2,0）压过上面的 `.rp-ear.on`（0,2,0 同级、
+             靠"后写的赢"）—— 只写 `.rp-ear.rp-down`（0,2,0）会被 .rp-ear.on 的 opacity 抢掉。
+             加了 .on 之后不透明度是 1，所以尾巴还得给出 `opacity:1` 把 .on 的 .92 盖过去。 */
+        '.rp-ear.rp-down{opacity:1;transform:rotate(38deg) scaleY(.7)}',
+        '.rp-ear.rp-down.l{transform:rotate(-38deg) scaleY(.7)}',
+        '.rp-ear.on.rp-down{opacity:1}',
+        /* 撇嘴：嘴角往下一撇（素材是张真实照片，改不了脸，所以用一小段弧线画在嘴上）
+           位置是按素材**量出来的**：兔子的嘴是鼻头下面那个"Y"字（鼻头 + 人中），
+           交点约 (35.5%, 27%)、人中竖线一直拉到 33.5% —— 弧线就压在这个 Y 下面，
+           所以 left/top 取 (34.2%, 28.2%)、宽 6%、高 3%。
+           ⚠ 旧值是 (41.5%, 33%)：那是**脸颊**，不是嘴（和眼泪一样来自那次量错的坐标）。
+           线宽不写死 px 而是读 --rp-mouth-bw（layout() 按兔兔宽度算）——
+           否则 80px 的小兔兔会顶着一根 3px 的粗弧线、320px 的大兔兔又细得看不见。 */
+        '.rp-mouthdown{position:absolute;left:34.2%;top:28.2%;width:6%;height:3%;opacity:0;',
+        '  pointer-events:none;transition:opacity .18s ease}',
+        '.rp-mouthdown span{display:block;width:100%;height:100%;',
+        '  border-bottom:var(--rp-mouth-bw,3px) solid #93496a;',
+        '  border-radius:0 0 50% 50%;filter:drop-shadow(0 1px 1px rgba(0,0,0,.35))}',
+        /* ⚠ 类名只有 **rp-angry**：引擎里 `pet.classList.add('rp-angry')`。
+           这里曾经写成 `rp-anger`（少一个 y），于是下面三条规则**全是死的** ——
+           撇嘴、脸红暖光、发抖一个都没生效；眼泪那条因为同时列了 `.rp-anger` 和
+           `.rp-angry` 才侥幸活着（所以"看得见眼泪、看不见表情"这种现象很容易骗过自检）。
+           教训：动画/表情按 class 走的时候，class 名要在**同一处**定义，别靠记性。 */
+        '.rp-pet.rp-angry .rp-mouthdown{opacity:.9}',
+        /* ============ 生气 / 哭（眼泪是画出来的，不是贴图） ============
+           坐标是**把素材打上网格量出来的**（332×305 的原图 + 瞳孔质心）：
+             可见的那只眼睛中心 ≈ **(50%, 21%)**（瞳孔横跨 48%~52%、竖跨 19%~24%），
+             鼻头 / 嘴（那个"Y"的交点）≈ (36%, 27%)。
+           ⚠ 曾经写成 (46%, 27%) —— 那是**鼻子**的位置，不是眼睛：于是眼泪既低了
+             12 个百分点、又偏了 4 个百分点，挂在嘴角和脸颊上（用户直接圈着眼睛说不准）。
+             真实照片素材上"眼睛"和"鼻子"只差几个百分点，光看代码根本发现不了，必须量。
+           **只画一条**，正对眼睛：上端从下眼睑 (23%) 开始往下淌，
+           泪珠本身约 5.5% 宽 × 4.4% 高，正好是一只眼睛的大小。
+           加一点 blur 就是一条泪痕；泪痕上端不透明、往下慢慢化开（渐变在 SVG 里）。 */
+        '.rp-tear{position:absolute;left:37%;top:18.5%;width:26%;height:42%;opacity:0;pointer-events:none;',
+        '  filter:blur(.4px) drop-shadow(0 1px 2px rgba(20,40,60,.45));transition:opacity .22s ease}',
+        /* left 的算法：泪珠固定在元素水平中点，所以 **元素中心 = left + 13%**（宽 26% 的一半）。
+           left=37% → 中心 50%，正好落在眼睛 (50%, 21%) 上。
+           ⚠ 早先是两条（34% / 40%，各夹着眼睛一侧），现在按用户要求只留一条、
+             直接对准眼睛 —— 想让泪痕稍微偏到内眼角/外眼角，只改这一个数即可。 */
+        '.rp-tear svg{display:block;width:100%;height:100%;overflow:visible;',
+        '  filter:drop-shadow(0 1px 2px rgba(0,0,0,.3))}',
+        /* 眼泪的"扫过"：整条泪痕往下挪一点点、同时微微明暗 ——
+           看起来是"一滴从眼睛里滑下去"，而不是整条同时闪。
+           ⚠ 两点都是踩过的坑：
+             · 动画**不能带 fill-mode:both/forwards** —— 帧里的 opacity 会一直压着
+               "收起眼泪"那条过渡，眼泪就再也淡不掉了；
+             · 透明度**不能淡到 0** —— 那样每次循环都会有一段"眼泪不见了"的空档，
+               截图/肉眼都可能正好撞上（第一版就是淡到 0，结果截出来几乎是空的）。 */
+        /* 出现：**过渡 + 一条不带 fill 的入场动画，两个一起给**。
+           ⚠ 只给 `transition` 的话，class 是在页面早就画完、元素已经被解析成 opacity:0
+             之后才加的（真实的戳→生气就是这条路径），浏览器有时就是不起这条过渡：
+           表现是"class 有、眼泪死活不出来"（探针 0c 项就是盯这个的：opacity 必须是 1）。
+           入场动画兜住这种情况 —— 它不跑也没关系，class 上那条 `opacity:1` 会立刻生效
+           （最坏情况只是没有 0.22s 的淡入，而不是看不见）。
+           ⚠ 动画**绝不能带 fill-mode:both/forwards**：帧里的 opacity 会一直压着
+             "收起眼泪"那条过渡，眼泪就再也淡不掉了。 */
+        '.rp-pet.rp-angry .rp-tear{opacity:1;animation:rp-tearin .22s ease}',
+        '@keyframes rp-tearin{from{opacity:0}to{opacity:1}}',
+        '.rp-pet.rp-angry .rp-tear svg{',
+        '  animation:rp-tearsweep 1.5s linear infinite}',
+        '@keyframes rp-tearsweep{0%{opacity:.5;transform:translateY(-12%)}',
+        '  40%{opacity:1;transform:translateY(0)}',
+        '  78%{opacity:1;transform:translateY(5%)}',
+        '  100%{opacity:.5;transform:translateY(10%)}}',
+        /* 躲起来抽泣时眼泪只留一半（肩线以下已经躲到屏幕边外了），慢慢明暗，像还在哭 */
+        '.rp-pet.rp-hide .rp-tear{opacity:.8}',
+        '.rp-pet.rp-hide .rp-tear svg{animation:rp-tearsad 2.4s ease-in-out infinite}',
+        '@keyframes rp-tearsad{0%,100%{opacity:.5;transform:translateY(-5%)}',
+        '  50%{opacity:1;transform:translateY(5%)}}',
+        /* 生气那 1 秒：脸憋红一点（素材是照片，不能改脸型，只能给点暖色 + 压暗一圈）。
+           滤镜从 --rp-glow 拼（见 .rp-img 那段说明：不能直接写内联 style.filter） */
+        '.rp-pet.rp-angry .rp-img{',
+        '  filter:var(--rp-glow,drop-shadow(0 10px 18px rgba(0,0,0,.55))) saturate(1.22)',
+        '  drop-shadow(0 0 16px rgba(255,96,120,.5))}',
+        /* 躲到屏幕边上的那几秒：不能接点击 —— 挡住"继续戳"，
+           而且这时兔兔本来就是"藏起来了"，点不到才对。 */
+        '.rp-pet.rp-hide{pointer-events:none}',
+        /* 生气时整只轻轻抖。
+           ⚠ 抖动必须写在内层**图片**上、不能写 .rp-inner：内层的 transform 是呼吸/蹦跳
+             （setInner 每帧写）在用的，CSS 动画一挂上去两边就互相覆盖。图片层没别人碰。 */
+        '.rp-pet.rp-angry .rp-img{animation:rp-shiver .28s linear infinite}',
+        '@keyframes rp-shiver{0%,100%{transform:translateX(-1px)}50%{transform:translateX(1px)}}',
 
         /* 胡萝卜（SVG，越啃越短靠 scaleX）
            位置是按素材调的：兔兔侧脸朝右，嘴约在宽 70% / 高 50% 处，
@@ -685,8 +859,9 @@ window.__ModuleLoader__.load({
         /* 拖动中、正在吃、以及兔兔被拖走时都不显示把手，免得两个动作撞在一起 */
         '.rp-pet.rp-drag .rp-offer,.rp-offer.rp-grab{opacity:0}',
         '.rp-pet.rp-eating .rp-offer{opacity:0}',
-        /* 光标接近嘴边时兔兔亮一下：告诉用户"松手就能喂到" */
-        '.rp-pet.rp-mouth .rp-img{filter:drop-shadow(0 10px 18px rgba(0,0,0,.55)) brightness(1.1)',
+        /* 光标接近嘴边时兔兔亮一下：告诉用户"松手就能喂到"。同样从 --rp-glow 拼 */
+        '.rp-pet.rp-mouth .rp-img{',
+        '  filter:var(--rp-glow,drop-shadow(0 10px 18px rgba(0,0,0,.55))) brightness(1.1)',
         '  drop-shadow(0 0 18px rgba(255,190,110,.55))}',
 
         /* 气泡：说话 / 飘词共用。
@@ -712,6 +887,10 @@ window.__ModuleLoader__.load({
         '.rp-bubble.rp-word.c-bite{color:#ffc37a}',
         '.rp-bubble.rp-word.c-mood{color:#ffb0d8}',
         '.rp-bubble.rp-word.c-idle{color:rgba(255,255,255,.6)}',
+        /* 生气=紫红、哭/委屈=淡蓝：和 WORDS 里那三个池对应（少了这两个规则的话
+           floatWord 传进来的 c-mad / c-cry 会落回继承色 —— 等于颜色白写了） */
+        '.rp-bubble.rp-word.c-mad{color:#ff9ec0}',
+        '.rp-bubble.rp-word.c-cry{color:#bcd9ff}',
 
         /* 飘起来的小词（不占气泡位，往上游走） */
         /* 飘词：起点放在兔兔身体上方一点，**不是**头顶 —— 头顶是气泡的地盘。
@@ -726,6 +905,7 @@ window.__ModuleLoader__.load({
         '  100%{opacity:0;transform:translate(-50%,-46px) scale(.97)}}',
         '.rp-float.c-touch{color:#9fe6ff} .rp-float.c-bite{color:#ffc37a}',
         '.rp-float.c-mood{color:#ffb0d8} .rp-float.c-idle{color:rgba(255,255,255,.6)}',
+        '.rp-float.c-mad{color:#ff9ec0} .rp-float.c-cry{color:#bcd9ff}',
 
         /* 碎屑粒子 */
         '.rp-crumb{position:absolute;width:4px;height:4px;border-radius:1px;background:#ffab4d;',
@@ -744,6 +924,24 @@ window.__ModuleLoader__.load({
         '  pointer-events:none;text-shadow:0 2px 8px rgba(0,0,0,.9);transition:opacity .3s ease}',
         '.rp-count.on{opacity:1}',
         '.rp-count b{color:#ffb765;font-weight:400}',
+
+        /* ============ 自定义名称：挂在兔兔头顶的小牌子 ============
+           ⚠ 必须是 **.rp-pet 的子元素**、不能放进 .rp-inner / .rp-flip：
+             那两层会跟着朝向镜像（`scaleX(-1)`），名字会反过来写。
+           pointer-events:none 也是必须的：牌子探出兔兔的盒子之外，
+           要是接住点击就等于在界面上凭空多了一块挡板。
+           字号跟着兔兔宽度走（layout() 写 `--rp-name-fs`），80~320px 都有合适的大小。 */
+        '.rp-name{position:absolute;left:50%;bottom:100%;transform:translate(-50%,-6px);',
+        '  padding:2px 9px;border-radius:999px;font-size:var(--rp-name-fs,11px);line-height:1.5;',
+        '  letter-spacing:.04em;color:#fff;white-space:nowrap;max-width:190px;overflow:hidden;',
+        '  text-overflow:ellipsis;background:rgba(10,14,20,.62);border:1px solid rgba(255,255,255,.16);',
+        '  box-shadow:0 3px 10px rgba(0,0,0,.45);text-shadow:0 1px 3px rgba(0,0,0,.7);',
+        '  pointer-events:none;opacity:0;transition:opacity .22s ease;z-index:2}',
+        '.rp-pet.rp-hasname .rp-name{opacity:1}',
+        /* 有名字时，头顶那两样（台词气泡 / "胡萝卜 ×N"）整体上移，
+           否则会压在名字牌上 —— 名字是常驻的，气泡和计数是临时的，让临时的让路。 */
+        '.rp-pet.rp-hasname .rp-bubble{bottom:calc(100% + 22px)}',
+        '.rp-pet.rp-hasname .rp-count{top:-40px}',
         /* 计数 +1 时闪一下，否则数字变了也注意不到 */
         '.rp-count.bump{animation:rp-bump .42s cubic-bezier(.2,1.6,.4,1)}',
         '@keyframes rp-bump{0%{transform:scale(1)}38%{transform:scale(1.22)}100%{transform:scale(1)}}',
@@ -824,6 +1022,16 @@ window.__ModuleLoader__.load({
         '  border-radius:50%;background:#9fd8ff;box-shadow:0 0 8px rgba(159,216,255,.8);cursor:pointer}',
         '.rp-row .rp-val{width:42px;text-align:right;font-family:Consolas,Menlo,monospace;',
         '  font-size:12px;color:rgba(255,255,255,.5);flex:none}',
+        /* 文本框（自定义名称）。跟滑块的深色风格对齐；:focus 时给一圈淡蓝，
+           否则深色面板里看不出光标在哪个框里。 */
+        '.rp-input{flex:1;min-width:0;padding:6px 9px;border-radius:7px;font-size:12px;',
+        '  border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.06);',
+        '  color:rgba(255,255,255,.92);font-family:inherit;outline:none;',
+        '  transition:border-color .18s,background .18s}',
+        '.rp-input::placeholder{color:rgba(255,255,255,.3)}',
+        '.rp-input:focus{border-color:rgba(159,216,255,.65);background:rgba(255,255,255,.1)}',
+        /* 行里的按钮不要跟着 .rp-btn 的 flex:1 撑满整行 */
+        '.rp-row .rp-btn{flex:none;padding:6px 12px}',
         '.rp-sw{position:relative;width:38px;height:20px;border-radius:999px;flex:none;cursor:pointer;',
         '  background:rgba(255,255,255,.14);transition:background .2s}',
         '.rp-sw i{position:absolute;left:2px;top:2px;width:16px;height:16px;border-radius:50%;',
@@ -886,7 +1094,10 @@ window.__ModuleLoader__.load({
         : '');
       ROOT.appendChild(layer);
       var pet = el('div', 'rp-pet', layer);
-      var inner = el('div', 'rp-inner', pet);
+      /* .rp-flip 只是"翻转用的包装层"，见 CSS 里那段说明：
+         镜像挂在它身上才能走过渡动画（.rp-inner 的 transform 每帧都被呼吸/蹦跳重写）。 */
+      var flipEl = el('div', 'rp-flip', pet);
+      var inner = el('div', 'rp-inner', flipEl);
       el('div', 'rp-ear l', inner);
       el('div', 'rp-ear r', inner);
       var img = el('img', 'rp-img', inner);
@@ -910,6 +1121,31 @@ window.__ModuleLoader__.load({
         'fill="url(#rpDg)" stroke="rgba(255,255,255,.7)" stroke-width="1.1"/>' +
         '<ellipse cx="6.1" cy="18.2" rx="2.1" ry="2.7" fill="rgba(255,255,255,.72)"/>' +
         '</svg>';
+      /* 眼泪：**画出来的**（两串泪痕，各挂在一只眼睛的内角上往下淌）。
+         用 SVG 画而不是贴图片：素材是张真实照片，贴图会连同背景一起贴上去；
+         而且泪痕要能拉长/淡出/循环，画出来的才好控制。
+         每串的形状是"上面窄、下面慢慢晕开的一条" —— 只用 circle 圆点会像贴了两颗珠子。 */
+      var TEAR_SVG =
+        '<svg viewBox="0 0 60 160" aria-hidden="true">' +
+        '<defs><linearGradient id="rpTear" x1="0" y1="0" x2="0" y2="1">' +
+        '<stop offset="0" stop-color="#eafaff" stop-opacity="1"/>' +
+        '<stop offset=".5" stop-color="#b6e6ff" stop-opacity=".92"/>' +
+        '<stop offset=".78" stop-color="#8ccdf0" stop-opacity=".5"/>' +
+        '<stop offset="1" stop-color="#7cc8f0" stop-opacity="0"/>' +
+        '</linearGradient></defs>' +
+        '<path d="M30 4 C36 26 40 32 40 44 C40 60 30 68 30 84 C30 100 39 112 36 128' +
+        ' C34 142 28 150 30 158" fill="none" stroke="url(#rpTear)" stroke-width="8" ' +
+        'stroke-linecap="round"/>' +
+        '<ellipse cx="30" cy="17" rx="6.4" ry="8.4" fill="#eafaff" opacity=".96"/>' +
+        '<circle cx="27.4" cy="14.6" r="2.3" fill="#fff"/>' +
+        '</svg>';
+      /* 眼泪只有**一条**（用户明确要求：一条、对准眼睛即可）。
+         位置全在 CSS 的 .rp-tear 里（left:37% 的元素中心正好是眼睛的 50%）。 */
+      var tearEl = el('div', 'rp-tear', inner);
+      tearEl.innerHTML = TEAR_SVG;
+      /* 撇嘴：生气/委屈时嘴角往下 */
+      var mouthDown = el('div', 'rp-mouthdown', inner);
+      mouthDown.innerHTML = '<span></span>';
       el('div', 'rp-shadow', inner);
       var carrot = el('div', 'rp-carrot', inner);
       carrot.id = 'rpCarrot';
@@ -938,8 +1174,18 @@ window.__ModuleLoader__.load({
       gear.textContent = '⚙';
       gear.title = '兔兔设置';
       var count = el('div', 'rp-count', pet);
+      /* 自定义名称的牌子：挂在 pet 上（**不能放进 inner/flip**，否则镜像时字会反着写），
+         由 applyName() 按 cfg.name 控制显示。 */
+      var nameEl = el('div', 'rp-name', pet);
       var panel = el('div', 'rp-panel', layer);
       var earL = inner.querySelector('.rp-ear.l'), earR = inner.querySelector('.rp-ear.r');
+
+      /* 把 cfg.name 写到头顶。空名字 = 收起牌子（同时把气泡/计数挪回头顶原位） */
+      function applyName() {
+        var n = String(cfg.name == null ? '' : cfg.name).trim();
+        nameEl.textContent = n;
+        pet.classList.toggle('rp-hasname', !!n);
+      }
 
       /* ======================= 状态 ======================= */
       var S = {
@@ -952,11 +1198,14 @@ window.__ModuleLoader__.load({
         restUntil: 0,                     // 到这个时刻之前原地休息（跟随的"停顿"）
         retargetAt: 0,                    // 到这个时刻之后才允许再挑落脚点
         drag: null,
+        anchorY: null,                    // 溜达的竖向锚点：用户最后一次把它放开的那一带（见 WANDER.bandY）
         eat: null,
         talking: false,
         bubbleTimer: 0,
         feedTimer: 0,
         lastTouch: 0,
+        /* 生气：戳多了会恼。state 见下面的 ANGER 段。放在 S 里是为了让探针/控制台能直接读 */
+        anger: { n: 0, state: 'calm', t: 0, sobAt: 0, sniffAt: 0, reset: false, home: null },
         t: Math.random() * 100          // 动画相位，避免开局整齐划一
       };
 
@@ -967,6 +1216,13 @@ window.__ModuleLoader__.load({
         S.W = w; S.H = h;
         pet.style.width = w + 'px';
         pet.style.height = h + 'px';
+        /* 撇嘴那条弧线的线宽跟着兔兔宽度走（默认 150px 时正好 3px，和旧值一致；
+           缩到 80px 或放到 320px 时也不会变成"一根粗线"或"看不见"）。
+           下限 1.4px：再细就渲染不出来了。 */
+        pet.style.setProperty('--rp-mouth-bw', Math.max(1.4, w * 0.02).toFixed(2) + 'px');
+        /* 头顶名字牌的字号也跟着宽度走（默认 150px → 11px；80px → 9px、320px → 20px 封顶） */
+        pet.style.setProperty('--rp-name-fs',
+          Math.max(9, Math.min(20, Math.round(w * 0.075))) + 'px');
         /* 默认位置要**预留把手的宽度**，否则兔兔贴在右下角时把手会被视口裁掉。
            （offerSpot 里还有一次"右边放不下就翻到左侧"的兜底。）
            x 和 y **分开判断** —— 早先 y 的默认值被绑在 `if (S.x == null)` 里，
@@ -1005,29 +1261,53 @@ window.__ModuleLoader__.load({
       /* ======================= 朝向：跑到左半边就镜像 =======================
          素材本身是**朝左**的（鼻子约在 44%、眼睛在 51%，鼻子在眼睛左边）。
          让它永远朝一个方向会很尬，所以放到屏幕左半边时整体水平镜像，总是面向屏幕中间。
-         翻转加在 .rp-inner 上、**不是** .rp-img：腮红 / 口水 / 胡萝卜都挂在 inner 里，
-         一起镜像后它们相对脸的位置才对得上（只翻图片的话，脸镜像了、腮红却留在原地）。
-         .rp-inner 的 transform-origin 是 50%，所以镜像是绕自身中心，不会产生位移。 */
-      var FLIP = 'scaleX(-1) ';
-      /* 所有对 inner 的 transform 写入都走它 —— 免得哪一处漏掉翻转 */
-      function setInner(rest) {
-        inner.style.transform = (S.faceLeft ? FLIP : '') + rest;
+         镜像挂在 **.rp-flip**（inner 的包装层）上、**不是** .rp-img：腮红 / 口水 / 胡萝卜
+         都挂在 inner 里，一起镜像后它们相对脸的位置才对得上（只翻图片的话，脸镜像了、
+         腮红却留在原地）；而"多一层包装"是为了让翻转能走 200ms 过渡（见 CSS 里那段说明）。
+
+         ⚠ **判据只看"兔兔自己的中心"和屏幕中线**（用户明确要求）。
+           早先留了 24px 迟滞防抖，但慢速溜达（约 26px/s）走完那 24px 要将近 1 秒 ——
+           表现出来是"都走进左半边了还朝着左边、过一会儿才猛地翻过来"。
+           现在一过中线就翻；翻转本身走 200ms 过渡，所以看着是"立刻开始转、0.2 秒转完"。
+           防抖靠"只在它自己在走的时候判"：停着不动时没人调 updateFacing()。
+
+         ⚠ **什么时候才允许转向**（用户明确要求）：
+           拖着的时候**绝不转** —— 必须"抓取 → 放下"这两个动作都做完、落地站稳之后才转向。
+           早先是每次 place() 都判一次，于是把兔兔往左/右拖、刚越过中线那一刻它就翻了，
+           人还捏着它呢，看着像被谁掰了一下。
+           所以现在：
+             · place() 里**不再**判断朝向（它每帧都在跑）；
+             · 只有三处会调 updateFacing()：
+                 1. 拖动松手 → 放进 playDrop 的 onDone（落地动画结束的那一刻）
+                 2. 自己溜达 / 跟着鼠标（那是它自己在走，不是被拖）
+                 3. 起手摆好位置、以及窗口 resize 之后
+             · updateFacing() 自己再守一道 `if (S.drag) return` —— 规则写在函数里，
+               以后谁多调一次也不会出现"拖着就翻"。 */
+      var FLIP = 'scaleX(-1)';
+      function setFlip() {
+        flipEl.style.transform = S.faceLeft ? FLIP : 'none';
       }
-      /* 跨过中线才翻，并且留 24px 迟滞：否则兔兔停在正中间时会来回翻个不停。 */
+      /* 所有对 inner 的 transform 写入都走它（呼吸 / 蹦跳 / 啃食，共 4 处）——
+         翻转**不在这里**：镜像已经挪到外面的 .rp-flip 包装层了。 */
+      function setInner(rest) {
+        inner.style.transform = rest;
+      }
+      /* 一过中线就翻：判据是"兔兔自己的中心 vs 屏幕中线"，没有距离迟滞。 */
       function updateFacing() {
-        var mid = window.innerWidth / 2;
-        var cx = S.x + S.W / 2;
-        var want = S.faceLeft ? (cx < mid + 24) : (cx < mid - 24);
+        if (S.drag) return;                 // 手还捏着它：不转（见上面的规则）
+        var want = (S.x + S.W / 2) < window.innerWidth / 2;
         if (want !== !!S.faceLeft) {
           S.faceLeft = want;
-          /* 立刻应用一次，别等下一帧 —— DEBUG.freeze（停循环）时 loop 根本不跑 */
-          setInner('translateY(0) scale(1,1)');
+          setFlip();                        // 立刻改目标值；动画由 CSS 的 200ms 过渡负责
         }
       }
 
       function place() {
+        /* 躲避动画自己逐帧写 transform（见 slideTo），这期间谁都别去动它 */
+        if (angSlide.busy) return;
         pet.style.transform = 'translate3d(' + S.x.toFixed(1) + 'px,' + S.y.toFixed(1) + 'px,0) scale(' + DEBUG.scale + ')';
-        updateFacing();
+        /* 这里**故意不调 updateFacing()**：place() 每帧都跑，拖动的每一像素都会经过它。
+           转向的时机见上面那段说明（松手落地 / 自己在走 / 起手与 resize）。 */
         /* 把手是兔兔的子元素，兔兔移动时它自动跟随 —— 这里只需要在"翻边判定可能变了"时
            更新一次落点（窗口尺寸、兔兔位置变化都会影响右侧还有没有空间）。
            拖动中不抢位置：那时候把手跟着光标走。 */
@@ -1151,6 +1431,9 @@ window.__ModuleLoader__.load({
         });
       }
       function hop() {
+        /* 生气那几秒不蹦：蹦跳是"高兴"的动作，和眼泪+发抖放一起就矛盾了。
+           （而且抖动的 CSS 动画正压着内层变换，这里再写会和它打架。） */
+        if (S.anger && (S.anger.state === 'angry' || S.anger.state === 'hide')) return;
         inner.style.transition = 'transform .34s cubic-bezier(.34,1.3,.5,1)';
         setInner('translateY(-18px) scale(1.04,.96)');
         setTimeout(function () {
@@ -1163,6 +1446,227 @@ window.__ModuleLoader__.load({
         img.style.transition = 'transform .12s ease';
         img.style.transform = 'translate(1px,3px) scale(1.02,.97)';
         setTimeout(function () { img.style.transform = 'none'; }, 110);
+      }
+
+      /* ======================= 生气：戳多了会恼 =======================
+         单击摸头本来是这只兔子最温柔的一面，但**一直戳**总得有个后果。
+         规则（全是一次点击算一下，双击自然算两下）：
+
+           戳满 ANGER_N(30) 下  →  生气 1 秒（眼泪 + 飞机耳 + 撇嘴 + 抖，呜一声）
+                                 →  躲到屏幕最近的左边/右边抽泣 3.2 秒（哭音，点不到它）
+                                 →  委屈 3 秒（自己挪回来，小声说话，喂一根胡萝卜就哄好）
+                                 →  消气
+
+         几个刻意的地方：
+          · 计数**只在戳的时候 +1**，而且会**慢慢回落**（ANGER_COOL 毫秒没被戳就 -1）：
+            所以"最多 30 下"约束的是**连击**，不是这只兔子一辈子的挨戳总数 ——
+            否则随便用几天就会莫名其妙生气一次。
+          · 喂胡萝卜、点面板、按按钮都**不算**戳它；只有"抓起它放下"算
+            （连着把兔兔拎来拎去确实烦人）。
+          · 生气之后**不扣好感**：这是表演，不是惩罚。喂一根反而立刻哄好 +2 好感，
+            把"我把它惹毛了"变成一个可以动手修好的状态，而不是白挨一顿。
+          · 躲边用的是**安全区夹取**（至少留 15% 在视口里），
+            所以窗口很窄或者兔兔本来就在屏幕边上时也不会整只消失。
+          · 位置只是躲一下：哭完**回到原来的地方**，不改变用户摆好的位置。
+         ================================================================ */
+      var ANGER_N = 30;            // 连戳多少下生气
+      var ANGER_COOL = 1600;       // 多久没戳就回落一点（连击的判定窗口）
+      var ANG_ANGRY = 1000;        // 生气（流泪）持续
+      var ANG_HIDE = 3200;         // 躲在屏幕边抽泣
+      var ANG_SAD = 3000;          // 委屈（自己挪回来）
+      var ANG_SLIDE = 460;         // 挪到屏幕边 / 挪回来的时长
+      /* 躲边时**留多少在视口里**：0.72 倍兔宽。
+         这个数是照着素材一点点试出来的：这只兔子是"侧躺成一团"的，脑袋在整张图的**中偏右**
+         （那只可见的眼睛在 46% 处）。所以
+           · 留 0.5 倍（75px）→ 眼睛离屏幕边只剩 6px，会被裁掉、眼泪就成了无源之水；
+           · 留 0.62 倍（93px）→ 眼睛保住了，但脸的右半边和耳朵还在屏幕外，看着像被切了一刀；
+           · 留 0.72 倍（108px）→ 整张脸（含耳朵）都在视口里，身子和外套探出屏幕外 42px。
+         想更"藏"一点就把这个数调小（代价是脸会被切），想更露出脸就调大。
+         下限 22px 是给很小的窗口兜底（兔兔最小 80px 宽时 0.72 倍只有 58px，够用）。 */
+      var HIDE_KEEP = 0.72;
+      var HIDE_MIN_PX = 22;
+
+      /* 计时按 DEBUG.angerMs 压缩（自检用；真实运行是 1） */
+      function angD(ms) { return Math.max(16, Math.round(ms * DEBUG.angerMs)); }
+
+      /* 正在生气/躲着哭：这时候别溜达、别跟着鼠标、拖了也不让走 */
+      function angBusy() {
+        var a = S.anger;
+        return a.state === 'angry' || a.state === 'hide';
+      }
+      function angDrip(now) {
+        var a = S.anger;
+        if (a.state !== 'calm' || a.n <= 0) return;
+        if (now - a.t >= ANGER_COOL) { a.t = now; a.n--; }
+      }
+      /* 被戳一下。到量就生气。 */
+      function poke() {
+        var a = S.anger, now = performance.now();
+        if (a.state !== 'calm') return;
+        angDrip(now);
+        a.t = now;
+        a.n++;
+        if (a.n >= ANGER_N) enterAnger();
+      }
+      function clearAngerTimers() {
+        var a = S.anger;
+        clearTimeout(a.t1); clearTimeout(a.t2); clearTimeout(a.hideT);
+        clearTimeout(a.thinkT); clearTimeout(a.loopT); clearTimeout(a.slideT);
+      }
+      /* 把嘴角撇下去：耳朵压平。两处都用 class 控制，摘掉就恢复。 */
+      function madFace(on) {
+        [earL, earR].forEach(function (e) { e.classList.toggle('rp-down', !!on); });
+      }
+      function enterAnger() {
+        var a = S.anger;
+        clearAngerTimers();
+        a.state = 'angry';
+        a.n = ANGER_N;
+        if (!S.eat) { Sfx.resume(); Sfx.yip(); }
+        /* 眼泪是过渡 + 循环动画出来的，加 class 之后就自己淌了。
+           ⚠ 加完 class 必须**强制一次重排**：这个元素是页面刚加载、上一帧还是 opacity:0
+             的情况下被加上类的，浏览器很可能把"0 → 1"当成初始样式而不起过渡 ——
+             结果眼泪死活不出来（无头自检里就抓到了这个：class 有、opacity 还是 0）。 */
+        pet.classList.remove('rp-angry', 'rp-hide');
+        void pet.offsetWidth;
+        pet.classList.add('rp-angry');
+        madFace(true);
+        if (!S.eat) floatWord(pick(WORDS.angry), 'c-mad');
+        count.classList.remove('on');           // 生气的时候别在它头上顶着 CARROT ×N
+        a.t1 = setTimeout(goHide, angD(ANG_ANGRY));
+      }
+      /* 躲到**屏幕最近的左边/右边**：
+         直接把 x 摆到屏幕外一部分，被视口裁掉大半 —— 剩下的耳朵尖、一只眼睛和眼泪就是"躲在边上"。
+         没有用 clip-path：那条路在窄窗口里会把兔兔裁成一细条甚至什么都没有；
+         摆到屏幕外的写法由**布局**负责裁切，各窗口下表现一致。
+         位置是**夹取**过的（至少留 15% / 26px 可见），所以它不会整只消失。 */
+      function goHide() {
+        var a = S.anger;
+        if (a.state !== 'angry') return;
+        a.state = 'hide';
+        a.home = { x: S.x, y: S.y };
+        /* sobAt / sniffAt 归零 —— cryLoop 下一拍就会响第一声。
+           光靠 enterAnger 里那声"呜"是不够的：用户说的重点是"躲起来之后在哭"，
+           所以第一声抽泣必须紧跟着躲进去那一刻。 */
+        a.sobAt = 0; a.sniffAt = 0;
+        if (!a.reset) Sfx.sob(true);
+        var w = S.W;
+        var keep = Math.max(HIDE_MIN_PX, Math.round(w * HIDE_KEEP));
+        var px = S.x + w / 2;
+        var left = px <= window.innerWidth / 2;
+        var target = left ? Math.round(keep - w) : Math.round(window.innerWidth - keep);
+        pet.classList.remove('rp-angry');
+        pet.classList.add('rp-hide');
+        /* 同样强制重排：让"眼睛上那两串眼泪"的淡出/淡到 62% 真的走过渡 */
+        void pet.offsetWidth;
+        slideTo(target, ANG_SLIDE);
+        a.hideT = setTimeout(comeBack, angD(ANG_HIDE));
+      }
+      /* 哭：抽泣 + 吸鼻子交替，间隔随机 —— 等间隔听起来像节拍器，不像在哭。
+         这个循环从起手就一直挂着，不在哭的时候只是每 140ms 醒一下看看状态，
+         但**必须记得重排下一次**：忘了就会变成"只在生气那一刻响一声、后面全哑"。 */
+      function cryLoop() {
+        var a = S.anger;
+        if (a.state === 'hide' || a.state === 'sad') {
+          var now = performance.now();
+          if (now >= a.sobAt) {
+            if (!a.reset) Sfx.sob(false);
+            a.sobAt = now + rnd(420, 820) * DEBUG.angerMs;
+          } else if (now >= a.sniffAt) {
+            if (!a.reset) Sfx.sniff();
+            a.sniffAt = now + rnd(900, 1700) * DEBUG.angerMs;
+          }
+        }
+        a.loopT = setTimeout(cryLoop, 140);
+      }
+      /* 自己挪回原处（走 slideTo 而不是瞬移，否则看起来是被弹回去的） */
+      function comeBack() {
+        var a = S.anger;
+        if (a.state !== 'hide') return;
+        a.state = 'sad';
+        pet.classList.remove('rp-hide');
+        if (a.home) slideTo(a.home.x, ANG_SLIDE);
+        a.t2 = setTimeout(calmDown, angD(ANG_SAD));
+      }
+      function calmDown() {
+        var a = S.anger;
+        clearAngerTimers();
+        a.state = 'calm';
+        a.n = 0;
+        a.t = performance.now();
+        pet.classList.remove('rp-angry', 'rp-hide');
+        madFace(false);
+        if (!a.reset) floatWord(pick(WORDS.sad), 'c-cry');
+      }
+      /* 哄好：喂一根胡萝卜立刻消气（还多给一点好感） */
+      function comfort() {
+        var a = S.anger;
+        if (a.state === 'calm') return false;
+        clearAngerTimers();
+        a.state = 'calm';
+        a.n = 0;
+        a.t = performance.now();
+        pet.classList.remove('rp-angry', 'rp-hide');
+        madFace(false);
+        if (a.home) { S.x = a.home.x; S.y = a.home.y; place(); }
+        addAffection(2);
+        floatWord('（不哭了）', 'c-mood');
+        return true;
+      }
+      /* 挪到某个 x。
+         ⚠ 用"固定帧数"推进，而不是像 playDrop 那样用 performance.now() 算进度。
+           原因是在无头浏览器里 **虚拟时间会把 setTimeout 快进，而 performance.now() 走的是真实时间**：
+           用真实时间算的话，几十个 setTimeout 会在几毫秒的真实时间里全部跑完，
+           进度 k 一直贴着 0 —— 表现就是"挪了半天还在原地"（自检里真的抓到了这个）。
+           按帧走则无论时钟怎么跳，20 多帧之后一定到位。
+           顺带一个好处：主循环每帧调 place()，两边一起写 pet.style.transform 的话滑动会被
+           一帧一帧拽回目标点、看起来就是瞬移，所以 angSlide.busy 期间 place() 直接让路。 */
+      var angSlide = { busy: false };
+      function slideTo(target, ms) {
+        var a = S.anger;
+        var from = S.x;
+        if (!isFinite(from) || !isFinite(target) || Math.abs(target - from) < 1) {
+          S.x = target; place(); return;
+        }
+        var STEPS = Math.max(6, Math.round(ms / 20));       // 约每 20ms 一帧
+        var i = 0;
+        angSlide.busy = true;
+        pet.style.transition = 'none';       // 由我们逐帧写，不要 CSS 过渡来插一脚
+        var step = function () {
+          i++;
+          var k = Math.min(1, i / STEPS);
+          var e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;   // easeInOutQuad
+          S.x = from + (target - from) * e;
+          pet.style.transform = 'translate3d(' + S.x.toFixed(1) + 'px,' + S.y.toFixed(1) + 'px,0) scale(' +
+            DEBUG.scale + ')';
+          if (k < 1) { a.slideT = setTimeout(step, 16); }
+          else {
+            S.x = target;
+            angSlide.busy = false;
+            pet.style.transition = '';
+            place();
+            positionOffer();
+          }
+        };
+        step();
+      }
+
+      /* 对外报一次生气状态（探针和控制台都读这一份，不各自去猜 class） */
+      function angerInfo() {
+        var a = S.anger;
+        return {
+          state: a.state,                                   // calm / angry / hide / sad
+          n: a.n,
+          need: ANGER_N,
+          tears: pet.classList.contains('rp-angry') || pet.classList.contains('rp-hide'),
+          earsDown: earL.classList.contains('rp-down') && earR.classList.contains('rp-down'),
+          clicked: getComputedStyle(pet).pointerEvents === 'none',   // 躲着的时候点不到它
+          x: S.x, y: S.y, w: S.W,
+          /* 视口测量换算用：?scale= 会把 rect 放大，探针拿 rect 和 S.W 比之前要先除掉它 */
+          rectScale: DEBUG.scale,
+          /* 躲起来之前的位置：哭完会挪回这里（探针要拿它比对"真的回来了"） */
+          home: a.home ? { x: a.home.x, y: a.home.y } : null
+        };
       }
 
       /* ======================= 等级 / 好感 ======================= */
@@ -1236,21 +1740,28 @@ window.__ModuleLoader__.load({
          辉光用 drop-shadow 画在素材外层，所以不需要动图片本身 —— 素材是一张真实兔子照片，
          直接 hue-rotate 会把毛色也染坏。
          第 1 档 glowA 只有 0.10（几乎看不出），是刻意的：让"升级换色"这件事从第 21 级
-         才开始有存在感，前面留给"升级很快"的爽感。 */
+         才开始有存在感，前面留给"升级很快"的爽感。
+         ⚠ 写的是**自定义属性** `--rp-glow`，不是 `img.style.filter`：
+           内联 filter 会压掉 CSS 里所有按 class 叠加的滤镜（变暗/脸红/亮一下），
+           而且压得无声无息 —— 详见 .rp-img 那段注释。 */
       function applyTierLook() {
         var t = tierOf(levelOf(cfg.xp || 0));
         var tight = Math.round(6 + t.glowA * 6);      // 紧：贴着轮廓的一圈颜色
         var loose = Math.round(12 + t.glowA * 22);    // 松：向外散开的光晕
         var a1 = Math.min(1, t.glowA * 0.95).toFixed(2);
         var a2 = (t.glowA * 0.7).toFixed(2);
-        img.style.filter = 'drop-shadow(0 10px 18px rgba(0,0,0,.55))' +
+        img.style.setProperty('--rp-glow',
+          'drop-shadow(0 10px 18px rgba(0,0,0,.55))' +
           ' drop-shadow(0 0 ' + tight + 'px rgba(' + t.glow + ',' + a1 + '))' +
-          ' drop-shadow(0 0 ' + loose + 'px rgba(' + t.glow + ',' + a2 + '))';
+          ' drop-shadow(0 0 ' + loose + 'px rgba(' + t.glow + ',' + a2 + '))');
       }
 
       /* ======================= 喂胡萝卜 ======================= */
       function feed(bites) {
         if (S.eat) return false;
+        /* 喂一根就哄好了：生气/躲着哭的时候先消气（还多给一点好感），再照常啃。
+           所以"把它惹毛了"不是等它自己消气，而是可以动手修好的。 */
+        var cheered = comfort();
         /* 库存见底就喂不动了 —— 这是所有喂食路径的统一闸门：
            桌宠自己、自动投喂、以及在启动动画里戳那只兔子，都从各自的库存校验走。
            先扣再喂，所以不会出现"吃了但没扣"。 */
@@ -1336,7 +1847,7 @@ window.__ModuleLoader__.load({
          早先这里有一句"45% 概率顺手喂一根"，后果是双击（=两次单击）会叠成约 70% 喂食，
          而且同一个手势时灵时不灵 —— 用户没法预期点了会怎样，点击就变得不可信。
          喂食现在有专属动作：把胡萝卜拖到它嘴边（见"拖拽喂食"那段）。 */
-      function touch(px) {
+      function touch(px, noPoke) {
         var now = performance.now();
         if (now - S.lastTouch < 240) return;      // 连点节流
         S.lastTouch = now;
@@ -1349,6 +1860,10 @@ window.__ModuleLoader__.load({
         wiggleEars();
         hop();
         addAffection(1);                          // 摸它最涨好感
+        /* 摸够了会恼。默认在这里记一笔"被戳"，但 **拖动那条路要传 noPoke** ——
+           它已经在 pointerdown 里记过了，两边都记的话点一下会算成两下（实测过：
+           单击一次计数 +2，于是 30 下的耐心实际只要 15 下就没了）。 */
+        if (!noPoke) poke();
       }
 
       /* ======================= 点它说话 ======================= */
@@ -1360,6 +1875,13 @@ window.__ModuleLoader__.load({
         bubble(pick(weightedTalk()), '', 3000);   // 台词池随等级/好感增长
         wiggleEars();
         addAffection(1);                          // 跟它说话也算陪它
+        /* 刚被戳到炸毛的那一下，双击就不再是"聊聊天"，而是接着哼一声 ——
+           不然刚说完"再戳我要生气了"下一句又笑眯眯地聊胡萝卜，情绪就断了。 */
+        if (S.anger && S.anger.state === 'angry') {
+          floatWord(pick(WORDS.sad), 'c-cry');
+          setTimeout(function () { S.talking = false; }, 900);
+          return;
+        }
         setTimeout(function () { S.talking = false; }, 3200);
       }
 
@@ -1367,6 +1889,13 @@ window.__ModuleLoader__.load({
       pet.addEventListener('pointerdown', function (ev) {
         if (ev.target === gear || panel.contains(ev.target)) return;
         Sfx.resume();
+        /* 这一下算"戳了它一次"（生气计数用）。
+           刻意只挂 pointerdown、不挂 click：双击是两个 pointerdown（正好算两下），
+           而 click 只在浏览器判定为点击时才发。另外拖拽的起点也算戳 ——
+           连着把兔兔拎来拎去确实烦人。 */
+        poke();
+        /* 生气/躲着哭的时候不让拖走：它正躲在边上演戏呢，被拎出来就全废了 */
+        if (angBusy()) return;
         /* 先把拖动状态建起来，再去尝试 pointer capture。
            顺序很关键：setPointerCapture 在 pointerId 无效时会抛 DOMException
            （合成事件、或指针已经释放时都可能），如果它排在赋值前面，
@@ -1397,19 +1926,28 @@ window.__ModuleLoader__.load({
         pet.classList.remove('rp-drag');
         if (moved) {
           save();
+          /* 手动放下之后**先歇一会儿**再自己溜达：不清掉目标点的话，
+             它会立刻朝"用户拖动前那个落脚点"走掉 —— 等于你刚摆好的位置被它自己挪走了。
+             （S.targetX 是旧的横线溜达留下的字段，一起清掉免得混淆。） */
           S.targetX = null;
+          S.spot = null;
+          S.restUntil = performance.now() + rnd(2600, 9000);
+          /* 锚点跟着走：以后自己溜达只在"用户刚把它放下的这一带"里游走（不许爬远） */
+          S.anchorY = S.y;
           /* 松手落地：拖动时它是"被提着"的，放手就该有一记落地的分量，
              否则只是硬停在那里，动作没有收尾。
              落差给小（26px）、时长给短 —— 摸起来是轻快的一"啪"；
              关掉淡入/落地（landMs=0 且 fadeIn=0）时也照做，因为它是一次交互反馈，
              和"出场方式"是两回事。 */
           Sfx.put();                     // 放下音，和落地动画同时（"落"和"响"是一件事）
-          playDrop(240, 26);
+          /* 转向放在**落地动画结束**的那一刻（onDone）：
+             "抓取 → 放下"两个动作都做完、站稳了才转身，而不是拖到半路就翻（见朝向那段说明）。 */
+          playDrop(240, 26, updateFacing);
         }
         else if (wasTap) {
-          // 没拖动 = 点它一下
+          // 没拖动 = 点它一下（这一下已经由 pointerdown 记过"被戳"，所以传 noPoke）
           var r = pet.getBoundingClientRect();
-          touch(ev ? ev.clientX : r.left + r.width / 2);
+          touch(ev ? ev.clientX : r.left + r.width / 2, true);
         }
       }
       pet.addEventListener('pointerup', endDrag);
@@ -1483,6 +2021,14 @@ window.__ModuleLoader__.load({
           '<em>已吃 <b id="rp-eat">' + cfg.eatCount + '</b></em></div>' +
           '</div>' +
           group('look', '外观', true,
+            /* 自定义名称放第一行：它是"这只兔兔是谁"的标识，比大小/透明度更靠前。
+               ⚠ 文本框内容要转义后再拼进 HTML —— 名字是用户自由输入的，
+                 含 `"` 或 `<` 时会把属性/标签掀了。 */
+            '<div class="rp-row"><label>名称</label>' +
+            '<input type="text" id="rp-name" class="rp-input" maxlength="12" ' +
+            'placeholder="给它起个名字" value="' + escAttr(cfg.name) + '">' +
+            '<button class="rp-btn" id="rp-act-name">保存</button></div>' +
+            '<div class="rp-hint-row">起个名字会显示在兔兔头顶（最多 12 字）；留空 = 不显示</div>' +
             rowRange('size', '大小', '兔兔显示成多大（80~320px）', 80, 320, 2, cfg.size, '') +
             rowRange('op', '透明度', '嫌它抢眼就调低，25% 时几乎只剩个影子', 25, 100, 5,
               Math.round(cfg.opacity * 100), '%') +
@@ -1490,7 +2036,7 @@ window.__ModuleLoader__.load({
               Math.round(cfg.volume * 100), '%')) +
           group('behav', '行为', true,
             rowSwitch('sound', '音效', '关掉后摸它、啃胡萝卜都不出声，也不会占用音频通道') +
-            rowSwitch('wander', '自己溜达', '隔一会儿自己横向挪一段；和"跟着鼠标"只能开一个') +
+            rowSwitch('wander', '自己溜达', '隔一会儿自己在附近随机挪一段（斜着走，不是一条直线）；和"跟着鼠标"只能开一个') +
             rowSwitch('follow', '跟着鼠标', '在光标附近随机走动并停下歇会儿，不会贴着光标挡你看字') +
             rowSwitch('talk', '点击说话', '双击冒一句台词气泡；关掉后双击就没反应了') +
             rowSwitch('feed', '自动吃胡萝卜', '隔 9~22 秒自己掏一根啃，会扣今日胡萝卜')) +
@@ -1506,6 +2052,15 @@ window.__ModuleLoader__.load({
           '<button class="rp-btn" id="rp-act-wipe">清空数据</button>' +
           '</div>' +
           '</div>';                                   // .rp-panel-scroll
+
+        /* 属性值转义：名字是用户自由输入的，含 `"` / `<` 时直接拼进 HTML 会
+           把 value 属性截断甚至插出一个标签。（面板其它地方拼的都是数字/固定文案，
+           只有这一处需要它。） */
+        function escAttr(s) {
+          return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
 
         function bindRange(id, key, fn) {
           var input = panel.querySelector('#rp-' + id);
@@ -1563,8 +2118,8 @@ window.__ModuleLoader__.load({
         }
 
         bindSwitch('sound', 'sound', function () { if (cfg.sound) { Sfx.resume(); Sfx.pop(); } });
-        bindSwitch('follow', 'follow', function () { S.spot = null; S.restUntil = 0; S.mouse = null; });
-        bindSwitch('wander', 'wander', function () { S.targetX = null; });
+        bindSwitch('follow', 'follow', function () { S.spot = null; S.restUntil = 0; S.mouse = null; S.anchorY = S.y; });
+        bindSwitch('wander', 'wander', function () { S.spot = null; S.restUntil = 0; S.anchorY = S.y; });
         exclusive('follow', 'follow', 'wander', 'wander');
 
         /* 可滚动区的三个细节：
@@ -1612,6 +2167,25 @@ window.__ModuleLoader__.load({
         bindSwitch('talk', 'talk');
         bindSwitch('feed', 'autoFeed', function () { scheduleAutoFeed(); });
 
+        /* 自定义名称：输入框 + 「保存」（回车也算保存）。
+           保存时做三件事：去掉换行/首尾空格、截到 12 字（和 maxlength 一致，
+           中文按字符算）、写回输入框（让用户看见实际存下来的样子）。
+           留空 = 收起头顶的牌子。 */
+        var nameInput = panel.querySelector('#rp-name');
+        function commitName() {
+          var v = String(nameInput.value || '').replace(/[\r\n\t]+/g, ' ').trim().slice(0, 12);
+          nameInput.value = v;
+          var changed = v !== String(cfg.name || '');
+          cfg.name = v;
+          applyName();
+          save();
+          if (changed) Sfx.pop();          // "存下来了"的一点反馈（音效关掉时不响）
+        }
+        panel.querySelector('#rp-act-name').addEventListener('click', commitName);
+        nameInput.addEventListener('keydown', function (ev) {
+          if (ev.key === 'Enter') { ev.preventDefault(); commitName(); }
+        });
+
         /* 「喂一根」：**关掉面板 + 把胡萝卜把手显示出来**，引导用户自己去拖。
            为什么不直接 feed()：面板会挡住兔兔，关掉才看得见喂食动作；
            而"把胡萝卜拖到它嘴边"本来就是这个桌宠的核心互动，值得让用户亲手做一次。
@@ -1623,6 +2197,7 @@ window.__ModuleLoader__.load({
         panel.querySelector('#rp-act-reset').addEventListener('click', function () {
           S.x = window.innerWidth - S.W - 40;
           S.y = window.innerHeight - S.H - 20;
+          S.anchorY = S.y;                 // 换了地方 → 溜达的活动带也跟着挪过去
           place(); save();
         });
         /* 清空数据：等级 / 好感 / 累计吃了几根 / 位置 / 胡萝卜库存 全部回到初始。
@@ -1679,6 +2254,13 @@ window.__ModuleLoader__.load({
         if (wEl) {
           var txt = st.stock > 0 ? '· 存 ' + st.stock : '';
           if (wEl.textContent !== txt) wEl.textContent = txt;
+        }
+        /* 名称输入框：外部改过名字（比如控制台 setName）之后面板要跟上，
+           但**别覆盖正在输入的内容** —— 只有失焦时才回写。 */
+        var nEl = panel.querySelector('#rp-name');
+        if (nEl && nEl !== document.activeElement &&
+          nEl.value !== String(cfg.name == null ? '' : cfg.name)) {
+          nEl.value = String(cfg.name == null ? '' : cfg.name);
         }
       }
 
@@ -1878,28 +2460,95 @@ window.__ModuleLoader__.load({
         S.x = clamp(S.x + (dx / dist) * step, 4, Math.max(4, window.innerWidth - S.W - 4));
         S.y = clamp(S.y + (dy / dist) * step, 4, Math.max(4, window.innerHeight - S.H - 4));
         place();
+        updateFacing();     // 跟着鼠标走也算"它自己在走"，不是被拖（见朝向那段说明）
+      }
+
+      /* ======================= 自己溜达：在附近随机挑落脚点 =======================
+         要求（用户提的）：别老是横着一条直线走，路径要随机。
+
+         ⚠ 这里有个**不能想当然**的地方：不能"在整个屏幕上随机取一个点走过去"。
+           溜达速度只有 26px/s（等级越高越慢，见 TIERS.speed），
+           从屏幕右边走到左边要 40 秒 —— 表现出来不是"随机路径"，
+           而是"沿着一条水平线慢慢挪"，而且因为 y 也只在一条线上，看着更单调。
+           所以改成：
+             1) 落脚点取在**当前位置附近**（[distMin, distMax] 的距离、方向均匀随机）
+                → 每次走的是一小段斜线，连起来才是随机路径；
+             2) 候选点要**筛掉被视口夹扁的**：兔兔默认贴在右下角，
+                直接 clamp 的话"向下的目标"会退化成原地不动，路径又变回水平线；
+             3) 到了就**明确休息** [restMin, restMax]，再决定下一段走不走
+                （早先只有一句 0.004/帧 的概率，起步时机完全随机、也没个"歇够了"的交代）。 */
+      var WANDER = {
+        distMin: 90,         // 一段至少走这么远（太短看着像原地抖）
+        distMax: 300,        // 一段最多这么远（再远就成了"长途跋涉"，不像溜达）
+        /* 竖向活动带：以**锚点 y**（用户最后一次把它放开的那一带）为中心，上下各这么多 px。
+           二维随机游走是不收敛的 —— 不加这条带，它溜达久了会一路爬上去（实测 45 秒爬了 395px），
+           最后停在屏幕顶上不下来。加带之后它只在"你放它的那一带"里游走。
+           用户要求就是"不许爬上去，在里面游走就行"。 */
+        bandY: 110,
+        speed: 26,           // 基准速度 px/s（再乘等级档位的 speed 系数）
+        restMin: 2600,       // 到了之后歇多久(ms)
+        restMax: 9000,
+        rollChance: 0.008,   // 歇够之后，每帧决定"要不要起身走一段"
+        tries: 12            // 落脚点候选个数（挑没被夹扁的那个）
+      };
+
+      function pickWanderSpot() {
+        var maxX = Math.max(4, window.innerWidth - S.W - 4);
+        var maxY = Math.max(4, window.innerHeight - S.H - 4);
+        /* 活动带先按锚点算，再夹进视口；窗口太矮导致带子反向时收敛成一个点 */
+        var anchor = (typeof S.anchorY === 'number') ? S.anchorY : S.y;
+        var bandTop = Math.max(4, anchor - WANDER.bandY);
+        var bandBot = Math.min(maxY, anchor + WANDER.bandY);
+        if (bandBot < bandTop) bandTop = bandBot = Math.max(4, Math.min(anchor, maxY));
+        var good = [];
+        for (var i = 0; i < WANDER.tries; i++) {
+          var a = Math.random() * TAU;
+          var d = rnd(WANDER.distMin, WANDER.distMax);
+          var tx = clamp(S.x + Math.cos(a) * d, 4, maxX);
+          var ty = clamp(S.y + Math.sin(a) * d, bandTop, bandBot);
+          /* 用曼哈顿距离衡量"实际能挪多远"：被视口/活动带夹扁的候选会明显偏小，
+             直接丢掉（不是挑最远的那个 —— 那会让距离永远贴着上限）。
+             兔兔默认贴在右下角，不筛的话"向下"的目标一夹就成了原地不动，
+             路径又退化成一条水平线。 */
+          var dd = Math.abs(tx - S.x) + Math.abs(ty - S.y);
+          if (dd < WANDER.distMin) continue;
+          good.push({ x: tx, y: ty });
+        }
+        return good.length ? good[(Math.random() * good.length) | 0] : null;
       }
 
       function wanderTick(dt) {
         if (S.drag) return;
+        /* 生气/躲着哭的时候不许自己乱走：正委屈呢，还在屏幕上溜达就不像话了 */
+        if (angBusy()) return;
         /* 两个模式互斥（开关是双向互斥的，这里再守一道：
            只要 follow 开着就绝不走溜达分支，免得配置被手改后出现"两个都在动"）。 */
         if (cfg.follow) { followTick(dt); return; }
         if (!cfg.wander) return;
-        if (S.targetX == null) {
-          if (Math.random() < 0.004) {
-            S.targetX = rnd(20, Math.max(30, window.innerWidth - S.W - 20));
-            S.dir = S.targetX > S.x ? 1 : -1;
-          }
+        var now = performance.now();
+        if (!S.spot) {
+          if (now < (S.restUntil || 0)) return;            // 还在歇
+          if (Math.random() > WANDER.rollChance) return;   // 歇够了也不一定马上起身
+          S.spot = pickWanderSpot();
+          if (!S.spot) return;
+        }
+        var dx = S.spot.x - S.x, dy = S.spot.y - S.y;
+        var dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < 4) {                                    // 到了：歇一会儿再挑下一段
+          S.spot = null;
+          S.restUntil = now + rnd(WANDER.restMin, WANDER.restMax);
+          save();
           return;
         }
-        var dx = S.targetX - S.x;
-        if (Math.abs(dx) < 3) { S.targetX = null; save(); return; }
         /* 等级越高走得越稳（跨度小、不慌），见 TIERS.speed */
-        var speed = 26 * tierOf(levelOf(cfg.xp || 0)).speed;
-        var step = Math.min(Math.abs(dx), speed * dt) * (dx > 0 ? 1 : -1);
-        S.x = clamp(S.x + step, 4, window.innerWidth - S.W - 4);
+        var speed = WANDER.speed * tierOf(levelOf(cfg.xp || 0)).speed;
+        var step = Math.min(dist, speed * dt);
+        S.x = clamp(S.x + (dx / dist) * step, 4, Math.max(4, window.innerWidth - S.W - 4));
+        S.y = clamp(S.y + (dy / dist) * step, 4, Math.max(4, window.innerHeight - S.H - 4));
         place();
+        /* 自己溜达时照旧实时判朝向：它不是被谁捏着拖，"抓取-放下"那条规则不适用于它
+           （而且不管的话，它走到左半边会背对着屏幕中间）。 */
+        updateFacing();
       }
 
       /* ======================= 主动画循环 ======================= */
@@ -1933,7 +2582,13 @@ window.__ModuleLoader__.load({
         layout();
         S.x = clamp(S.x, 4, Math.max(4, window.innerWidth - S.W - 4));
         S.y = clamp(S.y, 4, Math.max(4, window.innerHeight - S.H - 4));
+        /* 溜达的活动带锚点也要跟着窗口夹一下，否则窗口变小后它会被"带子"推到屏幕外 */
+        if (typeof S.anchorY === 'number') {
+          S.anchorY = clamp(S.anchorY, 4, Math.max(4, window.innerHeight - S.H - 4));
+        }
         place();
+        /* 兔兔没动、是窗口变了：这种情况该跟着重判朝向（不然窗口缩一半后它会背对中间） */
+        updateFacing();
         positionOffer();
         if (panel.classList.contains('on')) togglePanel(true);
       }
@@ -2072,8 +2727,29 @@ window.__ModuleLoader__.load({
       if (DEBUG.x != null && isFinite(DEBUG.x)) S.x = DEBUG.x;    // 截图用（见 DEBUG.x 的说明）
       layout();
       place();
+      applyName();            // 按存档里的名字决定头顶牌子显不显示
+      /* 起手也要判一次朝向：place() 已经不判了（见朝向那段说明），
+         这里按恢复出来的位置定下"这只兔兔现在朝哪边"。 */
+      updateFacing();
+      /* 溜达的竖向锚点 = 起手位置：它只在"上次被放下的那一带"里游走（见 WANDER.bandY） */
+      S.anchorY = S.y;
       positionOffer();        // 把"拖拽喂食"的胡萝卜把手摆到兔兔旁边（起手时也要定位一次）
       applyTierLook();        // 按已有等级把外观摆对（辉光）
+      /* ?pose=hide —— 截图专用：**跳过挪过去的过程**，直接把兔兔摆到"躲在屏幕边抽泣"的落点。
+         和 ?mad=2 的区别：mad=2 走的是真流程（先生气、再挪），配合 ?freeze=1 会把
+         "正在挪"的中间帧冻住、看起来像被压扁了；pose 只摆位置和表情，不碰状态机。
+         放在"起手"这一段是有原因的：它要用 HIDE_MIN_PX 等常量，而那些常量声明在
+         ANGER 段里（文件中部）—— 写在 DEBUG 那一段会撞上**暂时性死区**，
+         报出来的还是"Script error."这种看不出所以然的错（踩过一次）。 */
+      if (DEBUG.pose === 'hide') {
+        pet.classList.add('rp-angry', 'rp-hide');
+        madFace(true);
+        S.x = (S.x + S.W / 2) <= window.innerWidth / 2
+          ? Math.round(Math.max(HIDE_MIN_PX, S.W * HIDE_KEEP) - S.W)
+          : Math.round(window.innerWidth - Math.max(HIDE_MIN_PX, S.W * HIDE_KEEP));
+        place();
+        positionOffer();
+      }
       /* 每日签到：起手读一次库存。supplyRead() 内部会在"换天/第一次"时自动签到，
          所以这里只需要判断"是不是刚签的"，是的话报一句。
          满仓时 gain 会小于 SUPPLY_BASE（因为库存到上限了），提示里要说清楚收了多少、少收多少。
@@ -2137,6 +2813,9 @@ window.__ModuleLoader__.load({
       else if (DEBUG.state === 'panel') { togglePanel(true); }
       if (DEBUG.freeze) { /* 不启动循环，画面静止，便于截图 */ }
       else requestAnimationFrame(loop);
+      /* 哭的循环在安安静静时每 140ms 空转一次，成本可以忽略 —— 换来的是
+         "躲到屏幕边上就一定有抽泣声"这件事不依赖任何别的事件去唤醒它。 */
+      if (!DEBUG.freeze) cryLoop();
 
       // 首次交互时解锁音频
       window.addEventListener('pointerdown', onFirstPointer);
@@ -2176,6 +2855,15 @@ window.__ModuleLoader__.load({
         step: function (dt) { wanderTick(dt == null ? 1 / 60 : dt); return { x: S.x, y: S.y }; },
         /* 手动触发一次落地动画（自检/调试用） */
         drop: function (ms, fromY) { playDrop(ms, fromY); },
+        /* 生气：戳一下 / 读状态 / 哄好 / 直接惹毛。
+           （enter 是给自检用的：探针不该依赖自己先把计数戳满，直接把状态摆过去更稳，
+             而且这条路径是同步的，探针能立刻读到结果，不用等定时器。） */
+        poke: function () { poke(); return angerInfo(); },
+        anger: function () { return angerInfo(); },
+        angerEnter: function () { enterAnger(); return angerInfo(); },
+        angerHide: function () { enterAnger(); goHide(); return angerInfo(); },
+        comfort: function () { return comfort(); },
+        angerThreshold: ANGER_N,
         setFollow: function (on) {
           cfg.follow = !!on;
           S.mouse = null;
@@ -2183,6 +2871,15 @@ window.__ModuleLoader__.load({
           save();
           syncPanel();
           return cfg.follow;
+        },
+        /* 改名字（控制台 / 外部调用）：和面板里点「保存」同一条逻辑。
+           注意 `config.name = 'x'` 这种直接改法**不会**刷新头顶牌子 —— 用这个入口。 */
+        setName: function (v) {
+          cfg.name = String(v == null ? '' : v).replace(/[\r\n\t]+/g, ' ').trim().slice(0, 12);
+          applyName();
+          save();
+          syncPanel();
+          return cfg.name;
         },
         config: cfg,
         state: S,
@@ -2197,6 +2894,9 @@ window.__ModuleLoader__.load({
           clearTimeout(S.feedTimer);
           clearTimeout(S.bubbleTimer);
           clearTimeout(S.dropTimer);
+          clearTimeout(S.blushTimer);
+          clearAngerTimers();              // 生气那套定时器（含哭的循环）必须一起清
+          angSlide.busy = false;
           if (S.raf) cancelAnimationFrame(S.raf);
           S.raf = 0;
           window.removeEventListener('resize', onResize);

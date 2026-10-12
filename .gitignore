@@ -13,6 +13,11 @@
 # 但不该出现在仓库里。
 _archive/
 
+# 无头浏览器（Edge/Chrome）留下的 user-data-dir：942 个文件、20MB 的缓存/配置，
+# 是 `--user-data-dir=$env:TEMP\...` 写错路径时落到工作区的产物。
+# 纯垃圾，千万别 `git add -A` 带进去。
+_headless/
+
 # --- Python（构建脚本用） ---
 __pycache__/
 *.py[cod]

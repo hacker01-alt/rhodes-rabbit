@@ -1,6 +1,6 @@
 {
   "name": "dsh-rhodes-boot",
-  "version": "1.18.0",
+  "version": "1.18.1",
   "private": true,
   "description": "DSH 启动前的罗德岛启动动画：第一帧起由开机黑幕接管，播完才露出界面；进度由真实网络状况驱动，兔子会吃胡萝卜",
   "keywords": [

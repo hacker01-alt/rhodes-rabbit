@@ -16,7 +16,9 @@ DSH 的**罗德岛兔兔桌宠**插件：一只浮在 Harness 界面上的兔兔
     按住拖到它身上松手即可（光标进入范围时兔兔会亮一下）。右侧放不下时把手会翻到左侧
   - **双击 = 让它说话**；**右键 / ⚙ = 设置面板**
 - **喂胡萝卜**：胡萝卜递到嘴边、一口一截越啃越短、橙色碎屑四散、啃完冒一句「吃完了！」
-- **设置面板**（右键 / 齿轮按钮）：大小、透明度、音量、音效、自己溜达、跟着鼠标、点击说话、自动吃胡萝卜
+- **设置面板**（右键 / 齿轮按钮）：**名称**、大小、透明度、音量、音效、自己溜达、跟着鼠标、点击说话、自动吃胡萝卜
+- **自定义名称**：面板「外观」第一行输入 +「保存」（回车也算），名字会显示在兔兔头顶的小牌子上，
+  跟着设置一起存进 `localStorage`，重启 Harness 还在；留空 = 不显示（最长 12 字）
 - **等级与好感**：吃胡萝卜涨等级（Lv.1~10、称号、**静默解锁新台词**、身上的暖光、走得更稳）；
   摸它 / 说话 / 喂食涨好感（5 个亲密度阶段，好感高了更容易冒软话）。面板底部有两条进度条，
   升级会闪一下暖光、弹气泡、放一声三音上行，并派发 `rhodes-pet:levelup` 事件。
@@ -27,7 +29,7 @@ DSH 的**罗德岛兔兔桌宠**插件：一只浮在 Harness 界面上的兔兔
   弹一句「签到完成 · 今日补给 ×325 已到位」；当天内每吃一根扣 1，吃空就喂不动。
   和启动动画共用 `dsh-rhodesPet.supply` 这个 `localStorage` 键（两边都能扣、都能签到），
   所以启动动画终章那句「胡萝卜 ×N」是真的在变。只装桌宠不装启动动画也不影响，反之亦然。
-- **待机小动作**：一直呼吸起伏；静置久了会飘一句 `（发呆中）`；开着溜达时会自己横向挪一段
+- **待机小动作**：一直呼吸起伏；静置久了会飘一句 `（发呆中）`；开着溜达时会**在附近随机挑落脚点斜着走一段**（不是横着一条直线），到了歇一会儿再走；只在"你放它的那一带"（上下各 110px）里游走，不会一路爬到屏幕顶
 
 **不会挡住界面**：只有兔兔本体、胡萝卜、气泡、设置面板接住点击，其余全是 `pointer-events:none`。
 
@@ -139,11 +141,11 @@ python rhodes-pet-plugin/tools/check_build.py
 # 3) 打包
 cd rhodes-pet-plugin
 pnpm pack --pack-destination ..
-# 产出 dsh-rhodes-pet-1.23.0.tgz
+# 产出 dsh-rhodes-pet-1.32.8.tgz
 
 # 4) 放到稳定目录并安装（别用 link:，pnpm 会穿过 junction 删源码，boot 插件踩过这个坑）
-copy dsh-rhodes-pet-1.23.0.tgz %USERPROFILE%\dsh-bundles\
-# dsh plugin --profile desktop add %USERPROFILE%\dsh-bundles\dsh-rhodes-pet-1.23.0.tgz
+copy dsh-rhodes-pet-1.32.8.tgz %USERPROFILE%\dsh-bundles\
+# dsh plugin --profile desktop add %USERPROFILE%\dsh-bundles\dsh-rhodes-pet-1.32.8.tgz
 ```
 
 **客户端插件的改动需要重启 Harness 才会生效**（不是刷新页面就够）。
